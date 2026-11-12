@@ -38,6 +38,17 @@ jobs:
       - name: Package x64
         run: node tools/build.mjs package --arch=x64
 
+      # A runner has no signed-in Codex account, so the smoke reads quota from a local stand-in that the receipt names.
+      - name: Build the Codex stand-in
+        shell: pwsh
+        run: |
+          $dir = Join-Path $env:RUNNER_TEMP 'codex-standin'
+          New-Item -ItemType Directory -Force $dir | Out-Null
+          & "$env:WINDIR\Microsoft.NET\Framework64\v4.0.30319\csc.exe" /nologo /platform:x64 "/out:$dir\codex.exe" tools\codex-standin.cs
+          if ($LASTEXITCODE -ne 0) { throw "The C# compiler failed with exit $LASTEXITCODE" }
+          & "$dir\codex.exe" --version
+          Add-Content -Path $env:GITHUB_PATH -Value $dir
+
       - name: Packaged smoke test
         shell: pwsh
         run: |
