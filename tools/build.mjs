@@ -13,7 +13,9 @@ const work = path.join(buildRoot, 'work');
 const appDir = path.join(buildRoot, 'app');
 const command = process.argv[2] || 'build';
 // --arch=x64 or --arch=arm64 picks the Windows target; the default is the PC's own type, so ARM64 on an ARM64 PC as before.
-const archFlag = process.argv.find(arg => arg.startsWith('--arch='))?.slice('--arch='.length) ?? (process.arch === 'x64' ? 'x64' : 'arm64');
+// The PC's own type: PROCESSOR_IDENTIFIER is system-wide, so x64 Node under emulation on an ARM64 PC still targets ARM64.
+function defaultArch() { return /^ARM/i.test(process.env.PROCESSOR_IDENTIFIER || '') ? 'arm64' : process.arch === 'x64' ? 'x64' : 'arm64'; }
+const archFlag = process.argv.find(arg => arg.startsWith('--arch='))?.slice('--arch='.length) ?? defaultArch();
 if (!['x64', 'arm64'].includes(archFlag)) throw new Error('Unsupported --arch ' + archFlag + '; use x64 or arm64.');
 const arch = archFlag;
 const manifest = JSON.parse(await fs.readFile(path.join(root, 'package.json'), 'utf8'));

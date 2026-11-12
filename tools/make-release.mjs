@@ -10,7 +10,9 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const local = process.env.LOCALAPPDATA;
 if (!local) throw new Error('LOCALAPPDATA is required for host-local builds.');
 const buildRoot = path.join(local, 'Limiter-build');
-const arch = process.argv.find(arg => arg.startsWith('--arch='))?.slice('--arch='.length) ?? (process.arch === 'x64' ? 'x64' : 'arm64');
+// The PC's own type: PROCESSOR_IDENTIFIER is system-wide, so x64 Node under emulation on an ARM64 PC still targets ARM64.
+function defaultArch() { return /^ARM/i.test(process.env.PROCESSOR_IDENTIFIER || '') ? 'arm64' : process.arch === 'x64' ? 'x64' : 'arm64'; }
+const arch = process.argv.find(arg => arg.startsWith('--arch='))?.slice('--arch='.length) ?? defaultArch();
 if (!['x64', 'arm64'].includes(arch)) throw new Error('Unsupported --arch ' + arch);
 const version = JSON.parse(await fs.readFile(path.join(root, 'package.json'), 'utf8')).version;
 const tar = path.join(process.env.SystemRoot || 'C:/Windows', 'System32', 'tar.exe');

@@ -7,6 +7,7 @@ Codex, Claude Code and Grok allowances, which of your projects used them this we
 What you need
 1. Windows 11. Use the zip that matches your PC: "x64" for most PCs (Intel or AMD), "arm64" for ARM PCs
    (for example Snapdragon). To check, open Settings, System, About, and read "System type".
+   The x64 zip does not start on an ARM PC; it shows where to download the ARM64 zip instead.
 2. For the Codex row: the Codex CLI installed and signed in (Limiter finds codex.exe; you can also pick it in Settings).
 3. For the Claude Code row: Claude Code used on this PC. Its local logs are read; nothing is sent anywhere.
 4. Optional, for the Grok row: a signed-in grokcli folder and Python on the PATH.

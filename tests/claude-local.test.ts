@@ -80,6 +80,9 @@ test('scanner drops replies older than the lookback and a missing root rejects',
   assert.equal(scanner.replies, 1);
   await assert.rejects(new ClaudeLogScanner(path.join(root, 'missing')).scan(now));
   assert.equal(claudeProjectsRoot({}, 'C:/home'), path.join('C:/home', '.claude', 'projects'));
+  // CLAUDE_CONFIG_DIR wins when absolute; the CI smoke relies on it. A relative value is ignored.
+  assert.equal(claudeProjectsRoot({ CLAUDE_CONFIG_DIR: 'D:/claude-sample' }, 'C:/home'), path.join('D:/claude-sample', 'projects'));
+  assert.equal(claudeProjectsRoot({ CLAUDE_CONFIG_DIR: 'relative' }, 'C:/home'), path.join('C:/home', '.claude', 'projects'));
 }));
 
 test('weekly window follows a known reset and falls back to a rolling week', () => {

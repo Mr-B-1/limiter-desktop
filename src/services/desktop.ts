@@ -1,6 +1,7 @@
 import koffi from 'koffi';
 import { screen, type BrowserWindow } from 'electron';
 import type { Bounds } from './store.js';
+import { NativeGuard } from './native-guard.js';
 
 const user = koffi.load('user32.dll');
 const findWindowEx = user.func('void* __stdcall FindWindowExW(void*, void*, str16, str16)');
@@ -23,17 +24,10 @@ const windowFromPoint = user.func('void* __stdcall WindowFromPoint(LimiterPoint)
 const getForegroundWindow = user.func('void* __stdcall GetForegroundWindow()');
 
 type Handle = bigint | null;
-// SetParent, SetWindowLongPtr and SetWindowPos make Windows send messages to our own window, and Electron turns those
-// into JS events while the call is still running on koffi's stack. A koffi call from such an event would start on the
-// same stack and overwrite the running call, so every desktop call made during one throws instead.
-let sending = false;
-function send<T>(call: () => T): T {
-  sending = true;
-  try { return call(); } finally { sending = false; }
-}
-function ready(): void {
-  if (sending) throw new Error('Desktop call made from inside a window message');
-}
+const guard = new NativeGuard();
+const send = <T>(call: () => T): T => guard.send(call);
+const ready = (): void => guard.ready();
+
 function className(handle: Handle): string {
   const buffer = Buffer.alloc(512);
   getClass(handle, buffer, 256);
@@ -94,6 +88,7 @@ export class DesktopSurface {
     return screen.screenToDipRect(null, { x: raw.left, y: raw.top, width: raw.right - raw.left, height: raw.bottom - raw.top });
   }
   show(): boolean {
+    ready();
     if (!this.attached) return false;
     this.window.showInactive();
     // HWND_TOP is relative to the desktop's children, never above application windows.
@@ -110,20 +105,20 @@ export class DesktopSurface {
   coveredBy(other: BrowserWindow): boolean {
     ready();
     const bounds = screen.dipToScreenRect(null, this.bounds());
-    const hit = windowFromPoint({ x: bounds.x + Math.floor(bounds.width / 2), y: bounds.y + Math.floor(bounds.height / 2) });
+    const hit = send(() => windowFromPoint({ x: bounds.x + Math.floor(bounds.width / 2), y: bounds.y + Math.floor(bounds.height / 2) }));
     return getAncestor(hit, 2) === other.getNativeWindowHandle().readBigUInt64LE();
   }
   coveredByNormalApp(): boolean {
     ready();
     const bounds = screen.dipToScreenRect(null, this.bounds());
-    const hit = windowFromPoint({ x: bounds.x + Math.floor(bounds.width / 2), y: bounds.y + Math.floor(bounds.height / 2) });
+    const hit = send(() => windowFromPoint({ x: bounds.x + Math.floor(bounds.width / 2), y: bounds.y + Math.floor(bounds.height / 2) }));
     const root = getAncestor(hit, 2) as Handle;
     return Boolean(root && isVisible(root) && !['Progman', 'WorkerW'].includes(className(root)) && !(Number(getStyle(root, -20)) & 0x8));
   }
   occlusionReceipt(other: BrowserWindow): Record<string, unknown> {
     ready();
     const bounds = screen.dipToScreenRect(null, this.bounds());
-    const hit = windowFromPoint({ x: bounds.x + Math.floor(bounds.width / 2), y: bounds.y + Math.floor(bounds.height / 2) });
+    const hit = send(() => windowFromPoint({ x: bounds.x + Math.floor(bounds.width / 2), y: bounds.y + Math.floor(bounds.height / 2) }));
     return { coverHandle: String(other.getNativeWindowHandle().readBigUInt64LE()), coverVisible: other.isVisible(),
       coverBounds: other.getBounds(), widgetNativeBounds: bounds, hit: String(hit), hitRoot: String(getAncestor(hit, 2)), hitClass: className(hit), hitRootClass: className(getAncestor(hit, 2)), hitRootTopmost: Boolean(Number(getStyle(getAncestor(hit, 2), -20)) & 0x8) };
   }

@@ -18,7 +18,9 @@ const local = process.env.LOCALAPPDATA;
 if (!local) throw new Error('Host-local storage unavailable');
 const root = path.join(local, 'Limiter-build');
 // --arch picks which package to test; each run gets a brand-new profile and its own receipt.
-const arch = process.argv.find(arg => arg.startsWith('--arch='))?.slice('--arch='.length) ?? (process.arch === 'x64' ? 'x64' : 'arm64');
+// The PC's own type: PROCESSOR_IDENTIFIER is system-wide, so x64 Node under emulation on an ARM64 PC still targets ARM64.
+function defaultArch() { return /^ARM/i.test(process.env.PROCESSOR_IDENTIFIER || '') ? 'arm64' : process.arch === 'x64' ? 'x64' : 'arm64'; }
+const arch = process.argv.find(arg => arg.startsWith('--arch='))?.slice('--arch='.length) ?? defaultArch();
 if (!['x64', 'arm64'].includes(arch)) throw new Error('Unsupported --arch ' + arch);
 const pointer = await fs.readFile(path.join(root, 'release-path-' + arch + '.txt'), 'utf8').catch(error => {
   if (error.code === 'ENOENT' && arch === 'arm64') return fs.readFile(path.join(root, 'release-path.txt'), 'utf8');

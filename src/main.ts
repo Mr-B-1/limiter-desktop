@@ -393,7 +393,8 @@ async function boot(): Promise<void> {
   session.defaultSession.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));
   session.defaultSession.setPermissionCheckHandler(() => false);
   session.defaultSession.webRequest.onBeforeRequest((details, callback) => callback({ cancel: !details.url.startsWith('limiter://widget/') }));
-  const clamp = () => { if (window && !window.isDestroyed() && desktop?.attached) desktop.setBounds(clampBounds(desktop.bounds(), screen.getAllDisplays().map(display => display.workArea))); };
+  // Display events can arrive while a native call runs (GUARDRAILS rule 49), so the clamp runs on the next turn.
+  const clamp = () => { setTimeout(() => { if (window && !window.isDestroyed() && desktop?.attached) desktop.setBounds(clampBounds(desktop.bounds(), screen.getAllDisplays().map(display => display.workArea))); }, 0); };
   screen.on('display-removed', clamp);
   screen.on('display-metrics-changed', clamp);
   const icon = nativeImage.createFromPath(path.join(appRoot, 'assets/tray.ico'));
@@ -729,7 +730,7 @@ if (wrongBuild) {
       message: 'This is the x64 build of Limiter, and this PC has an ARM64 processor.', detail: 'Download the ARM64 zip instead, from ' + DOWNLOAD_PAGE });
     if (choice === 0) await shell.openExternal(DOWNLOAD_PAGE).catch((error: unknown) => console.error('Download page did not open: ' + String(error)));
     app.exit(0);
-  });
+  }).catch((error: unknown) => { console.error('Wrong-build notice failed: ' + String(error)); app.exit(1); });
 } else if (!app.requestSingleInstanceLock()) app.quit();
 else if (process.argv.includes('--quit')) app.quit();
 else if (sandboxed && shortcut && existsSync(shortcut)) {
