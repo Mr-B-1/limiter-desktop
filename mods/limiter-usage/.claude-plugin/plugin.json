@@ -1,0 +1,5 @@
+{
+  "name": "limiter-usage",
+  "version": "0.1.0",
+  "description": "Writes Claude Code's own plan rate-limit figures to a local JSON file that the Limiter desktop widget reads."
+}

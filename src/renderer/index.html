@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'none'; font-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-src 'none'">
+  <title>Limiter</title><link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="widget">
+    <header class="titlebar">
+      <span class="brand"><i aria-hidden="true">ll</i> LIMITER</span>
+      <div class="controls">
+        <button id="refresh" title="Refresh usage" aria-label="Refresh usage">↻</button>
+        <button id="settings-toggle" title="Settings and details" aria-label="Settings and details" aria-expanded="false" aria-controls="details">⋯</button>
+        <button id="hide" title="Hide to tray" aria-label="Hide to tray">−</button>
+      </div>
+    </header>
+    <main aria-label="Usage and disk space">
+      <button id="codex-card" class="card" aria-label="Codex remaining capacity details">
+        <span class="row"><span class="name"><i class="dot codex"></i>Codex <small>week</small></span><strong id="percent">··</strong></span>
+        <span id="meter" class="meter" role="progressbar" aria-label="Codex weekly capacity remaining" aria-valuemin="0" aria-valuemax="100"><span id="fill"></span><i id="codex-pace" class="pace" hidden></i></span>
+        <span class="row meta"><span id="codex-meta">Connecting</span><span id="codex-reset"></span></span>
+      </button>
+      <button id="claude-card" class="card" aria-label="Claude Code remaining capacity details">
+        <span class="row"><span class="name"><i class="dot claude"></i>Claude Code <small>week</small></span><strong id="claude-percent">··</strong></span>
+        <span id="claude-meter" class="meter" role="progressbar" aria-label="Claude weekly capacity remaining" aria-valuemin="0" aria-valuemax="100"><span id="claude-fill"></span><i id="claude-pace" class="pace" hidden></i></span>
+        <span class="row meta"><span id="claude-meta">Reading local logs</span><span id="claude-short"></span></span>
+      </button>
+      <button id="grok-card" class="card" aria-label="Grok subscription usage details">
+        <span class="row"><span class="name"><i class="dot grok"></i>Grok <small id="grok-period">sub</small></span><strong id="grok-percent">··</strong></span>
+        <span id="grok-meter" class="meter" role="progressbar" aria-label="Grok subscription capacity remaining" aria-valuemin="0" aria-valuemax="100"><span id="grok-fill"></span><i id="grok-pace" class="pace" hidden></i></span>
+        <span class="row meta"><span id="grok-meta">Connecting</span><span id="grok-reset"></span></span>
+      </button>
+      <button id="local-card" class="card" aria-label="This PC disk space details">
+        <span class="row disk-row"><span class="name"><i class="dot disk"></i><span id="local-label">This PC</span> <small id="local-volume">C:</small></span><strong id="local-free" class="disk-value">Checking…</strong></span>
+        <span id="local-meter" class="meter" role="meter" aria-label="This PC disk space free" aria-valuemin="0" aria-valuemax="100"><span id="local-fill"></span></span>
+        <span class="row meta"><span id="local-total">Disk space</span><span id="local-age"></span></span>
+      </button>
+      <button id="remote-card" class="card" aria-label="Remote disk space details" hidden>
+        <span class="row disk-row"><span class="name"><i class="dot disk"></i><span id="remote-label">Remote</span> <small id="remote-volume">/</small></span><strong id="remote-free" class="disk-value">Checking…</strong></span>
+        <span id="remote-meter" class="meter" role="meter" aria-label="Remote disk space free" aria-valuemin="0" aria-valuemax="100"><span id="remote-fill"></span></span>
+        <span class="row meta"><span id="remote-total">Disk space</span><span id="remote-age"></span></span>
+      </button>
+    </main>
+    <footer><span id="age">Awaiting first read</span><span class="desktop-label">DESKTOP</span></footer>
+    <section id="details" class="details" hidden aria-label="Usage details and settings">
+      <div class="detail-heading"><strong id="details-title">Details</strong><button id="close-details" aria-label="Close details">×</button></div>
+      <div id="details-content" class="details-content"></div>
+      <div id="claude-calibrate" class="calibrate" hidden>
+        <h2>Enter a reading</h2>
+        <p>Copy the numbers from the Claude app usage card.</p>
+        <div class="fields">
+          <label>Weekly used %<input id="claude-weekly" inputmode="decimal" maxlength="6" placeholder="80" autocomplete="off"></label>
+          <label>Weekly resets in<input id="claude-weekly-resets" maxlength="20" placeholder="12h 32m" autocomplete="off"></label>
+          <label>5-hour used %<input id="claude-five" inputmode="decimal" maxlength="6" placeholder="17" autocomplete="off"></label>
+          <label>5-hour resets in<input id="claude-five-resets" maxlength="20" placeholder="2h 42m" autocomplete="off"></label>
+        </div>
+        <button id="claude-save" class="action">Save reading</button>
+        <p id="claude-form-status" role="status"></p>
+      </div>
+      <div id="settings" hidden>
+        <label for="theme">Appearance</label>
+        <select id="theme"><option value="system">Follow Windows</option><option value="dark">Dark</option><option value="light">Light</option></select>
+        <p>Lives on your desktop. Open apps stay above it. Drag the title bar to move it, or an edge or corner to resize. Your size is saved.</p>
+        <h2>Your setup</h2>
+        <p class="setting-line">Projects folder: <span id="projects-root">not set</span></p>
+        <button id="choose-projects" class="action">Choose projects folder</button><button id="clear-projects" class="action">Clear</button>
+        <p class="setting-hint">Its first-level folders become the project names. Without it, each session counts under its own folder name.</p>
+        <p class="setting-line">grokcli folder: <span id="grokcli-root">not set, Grok row hidden</span></p>
+        <button id="choose-grokcli" class="action">Choose grokcli folder</button><button id="clear-grokcli" class="action">Clear</button>
+        <div class="fields">
+          <label>This PC's disk name<input id="local-disk-label" maxlength="24" autocomplete="off"></label>
+          <label>Remote disk name<input id="remote-disk-label" maxlength="24" placeholder="Server" autocomplete="off"></label>
+          <label>Remote SSH host<input id="remote-disk-host" maxlength="64" placeholder="Host from your SSH config" autocomplete="off" spellcheck="false"></label>
+        </div>
+        <button id="save-disks" class="action">Save disk names</button><button id="clear-remote" class="action">Remove remote disk</button>
+        <label class="check"><input id="start-with-windows" type="checkbox"> Start with Windows</label>
+        <p id="startup-note" class="setting-hint" hidden>A Startup-folder shortcut already starts Limiter at sign-in.</p>
+        <p id="settings-status" role="status"></p>
+        <h2>Other</h2>
+        <button id="choose-source" class="action">Choose Codex executable</button>
+        <button id="quit" class="action">Quit Limiter</button>
+      </div>
+    </section>
+    <p id="message" role="status" hidden></p>
+    <!-- Desktop resize handles. -->
+    <div class="resize-handle n" data-resize="n" aria-hidden="true"></div>
+    <div class="resize-handle ne" data-resize="ne" aria-hidden="true"></div>
+    <div class="resize-handle e" data-resize="e" aria-hidden="true"></div>
+    <button class="resize-handle se" data-resize="se" aria-label="Resize widget" title="Drag to resize. Arrow keys adjust the size."></button>
+    <div class="resize-handle s" data-resize="s" aria-hidden="true"></div>
+    <div class="resize-handle sw" data-resize="sw" aria-hidden="true"></div>
+    <div class="resize-handle w" data-resize="w" aria-hidden="true"></div>
+    <div class="resize-handle nw" data-resize="nw" aria-hidden="true"></div>
+    <!-- End desktop resize handles. -->
+  </div>
+  <script src="widget.js"></script>
+</body>
+</html>
