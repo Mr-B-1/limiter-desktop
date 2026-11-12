@@ -316,8 +316,9 @@ async function createWidget(): Promise<void> {
   window.webContents.on('will-navigate', event => event.preventDefault());
   window.webContents.on('will-attach-webview', event => event.preventDefault());
   window.on('close', event => { if (!quitting) { event.preventDefault(); hide(); } });
+  // Electron emits move and resize while a native SetWindowPos call is still running on koffi's own stack. A koffi call
+  // made here would start on that same stack and overwrite the running call (an access violation on x64), so only schedule.
   const saveBounds = () => {
-    if (window && !window.isDestroyed() && desktop?.attached) preferences.bounds = desktop.bounds();
     clearTimeout(saveTimer);
     saveTimer = setTimeout(() => { if (window && !window.isDestroyed() && desktop?.attached) { preferences.bounds = desktop.bounds(); void persist(); } }, 300);
   };

@@ -23,6 +23,17 @@ const windowFromPoint = user.func('void* __stdcall WindowFromPoint(LimiterPoint)
 const getForegroundWindow = user.func('void* __stdcall GetForegroundWindow()');
 
 type Handle = bigint | null;
+// SetParent, SetWindowLongPtr and SetWindowPos make Windows send messages to our own window, and Electron turns those
+// into JS events while the call is still running on koffi's stack. A koffi call from such an event would start on the
+// same stack and overwrite the running call, so every desktop call made during one throws instead.
+let sending = false;
+function send<T>(call: () => T): T {
+  sending = true;
+  try { return call(); } finally { sending = false; }
+}
+function ready(): void {
+  if (sending) throw new Error('Desktop call made from inside a window message');
+}
 function className(handle: Handle): string {
   const buffer = Buffer.alloc(512);
   getClass(handle, buffer, 256);
@@ -50,30 +61,34 @@ export class DesktopSurface {
     this.handle = window.getNativeWindowHandle().readBigUInt64LE();
   }
   get attached(): boolean {
+    ready();
     return Boolean(this.parent && isWindow(this.parent) && isVisible(this.parent) && isWindow(this.handle) && getParent(this.handle) === this.parent);
   }
   attach(bounds: Bounds): boolean {
+    ready();
     const parent = desktopView();
     if (!parent || !isWindow(this.handle)) { this.window.hide(); this.parent = null; return false; }
     this.window.setAlwaysOnTop(false);
     this.window.setSkipTaskbar(true);
     // Child coordinates belong to the desktop; remove top-level nonclient framing.
     const style = (Number(getStyle(this.handle, -16)) | 0x40000000) & ~0x80cf0000;
-    setStyle(this.handle, -16, BigInt(style));
-    if (getParent(this.handle) !== parent) setParent(this.handle, parent);
+    send(() => setStyle(this.handle, -16, BigInt(style)));
+    if (getParent(this.handle) !== parent) send(() => setParent(this.handle, parent));
     this.parent = parent;
     if (!this.attached) { this.window.hide(); return false; }
     this.setBounds(bounds);
     return true;
   }
   setBounds(bounds: Bounds): void {
+    ready();
     if (!this.attached) return;
     const native = screen.dipToScreenRect(null, bounds);
     const origin = { x: native.x, y: native.y };
     if (!screenToClient(this.parent, origin)) throw new Error('Desktop coordinates unavailable');
-    if (!setPosition(this.handle, 0n, origin.x, origin.y, native.width, native.height, 0x10 | 0x20)) throw new Error('Desktop position unavailable');
+    if (!send(() => setPosition(this.handle, 0n, origin.x, origin.y, native.width, native.height, 0x10 | 0x20))) throw new Error('Desktop position unavailable');
   }
   bounds(): Bounds {
+    ready();
     const raw = { left: 0, top: 0, right: 0, bottom: 0 };
     if (!getRect(this.handle, raw)) throw new Error('Widget bounds unavailable');
     return screen.screenToDipRect(null, { x: raw.left, y: raw.top, width: raw.right - raw.left, height: raw.bottom - raw.top });
@@ -82,27 +97,31 @@ export class DesktopSurface {
     if (!this.attached) return false;
     this.window.showInactive();
     // HWND_TOP is relative to the desktop's children, never above application windows.
-    setPosition(this.handle, 0n, 0, 0, 0, 0, 0x1 | 0x2 | 0x10 | 0x40);
+    send(() => setPosition(this.handle, 0n, 0, 0, 0, 0, 0x1 | 0x2 | 0x10 | 0x40));
     return true;
   }
   inspect(): Record<string, unknown> {
+    ready();
     return { attached: this.attached, handle: String(this.handle), parent: String(getParent(this.handle)), parentClass: className(getParent(this.handle)),
       rootClass: className(getAncestor(this.handle, 2)), topmost: Boolean(Number(getStyle(this.handle, -20)) & 0x8),
       childStyle: Boolean(Number(getStyle(this.handle, -16)) & 0x40000000), nativeVisible: Boolean(isVisible(this.handle)), bounds: this.bounds() };
   }
-  foreground(): string { return String(getForegroundWindow()); }
+  foreground(): string { ready(); return String(getForegroundWindow()); }
   coveredBy(other: BrowserWindow): boolean {
+    ready();
     const bounds = screen.dipToScreenRect(null, this.bounds());
     const hit = windowFromPoint({ x: bounds.x + Math.floor(bounds.width / 2), y: bounds.y + Math.floor(bounds.height / 2) });
     return getAncestor(hit, 2) === other.getNativeWindowHandle().readBigUInt64LE();
   }
   coveredByNormalApp(): boolean {
+    ready();
     const bounds = screen.dipToScreenRect(null, this.bounds());
     const hit = windowFromPoint({ x: bounds.x + Math.floor(bounds.width / 2), y: bounds.y + Math.floor(bounds.height / 2) });
     const root = getAncestor(hit, 2) as Handle;
     return Boolean(root && isVisible(root) && !['Progman', 'WorkerW'].includes(className(root)) && !(Number(getStyle(root, -20)) & 0x8));
   }
   occlusionReceipt(other: BrowserWindow): Record<string, unknown> {
+    ready();
     const bounds = screen.dipToScreenRect(null, this.bounds());
     const hit = windowFromPoint({ x: bounds.x + Math.floor(bounds.width / 2), y: bounds.y + Math.floor(bounds.height / 2) });
     return { coverHandle: String(other.getNativeWindowHandle().readBigUInt64LE()), coverVisible: other.isVisible(),
