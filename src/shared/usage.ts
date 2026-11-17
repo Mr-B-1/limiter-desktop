@@ -39,6 +39,8 @@ export interface DisplayState {
   forecast: Record<'codex' | 'claude-week' | 'claude-5h' | 'grok', import('../services/forecast.js').ForecastView | null>;
   // Which projects used each provider's current window, from the local logs (plans/2026-10-20-token-counter-by-project-v1.md).
   projects: Record<'claude' | 'codex', import('./projects.js').ProjectsView>;
+  // The zone the main process resolved for this PC, so the window formats times in the same zone (see displayTimeZone).
+  timeZone?: string;
   // The per-user setup shown in Settings (0.7.0).
   config: {
     projectsRoot: string | null;

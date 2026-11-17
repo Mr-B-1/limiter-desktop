@@ -23,6 +23,8 @@ const grokLabels: Record<DisplayState['grok']['status'], string> = {
 };
 const periodNames = { weekly: { short:'week', long:'Weekly' }, monthly: { short:'month', long:'Monthly' }, daily: { short:'day', long:'Daily' }, unknown: { short:'sub', long:'Period' } };
 let current: DisplayState | null = null;
+// Formats a reset or run-out time in the zone the main process resolved, which can differ from this window's ICU default.
+function reset(epochSeconds: number | null): string { return resetLabel(epochSeconds, current?.timeZone); }
 let panel: 'codex' | 'claude' | 'grok' | 'storage' | 'settings' | null = null;
 const percent = (value: number | null) => value === null ? '··' : String(Math.round(value * 10) / 10) + '%';
 const remaining = (used: number | null) => used === null ? null : Math.max(0, 100 - used);
@@ -76,7 +78,7 @@ function projectLines(view: DisplayState['projects']['claude'], text: (value: st
 function forecastText(view: DisplayState['forecast'][keyof DisplayState['forecast']]): string | null {
   if (!view) return null;
   if (view.pastReset || view.emptyAt === null) return 'At the last hour\'s pace it lasts past the reset.';
-  return 'At the last hour\'s pace it runs out at ' + resetLabel(Math.floor(view.emptyAt / 1000)) + '.';
+  return 'At the last hour\'s pace it runs out at ' + reset(Math.floor(view.emptyAt / 1000)) + '.';
 }
 function render(state: DisplayState): void {
   current = state;
@@ -142,7 +144,7 @@ function renderDetails(): void {
       text(window.bucketName + ' · ' + windowLabel(window.durationMins) + ' · ' + window.slot, true);
       const expired = window.resetsAt !== null && window.resetsAt * 1000 <= Date.now();
       text(expired ? 'Reset passed, awaiting new data.' : window.remainingPercent === null ? 'Remaining capacity unavailable' : percent(window.remainingPercent) + ' remaining');
-      text(resetLabel(window.resetsAt));
+      text(reset(window.resetsAt));
       if (window.restricted) text('The account reports an additional restriction.');
     }
     if (!state.snapshot?.windows.length) text('No account quota is available yet.');
@@ -160,9 +162,9 @@ function renderDetails(): void {
       claude.mode === 'scanning' ? 'Reading Claude Code activity on this PC.' : 'No Claude Code activity logs were found on this PC.');
     for (const [label, window] of [['Weekly', claude.weekly], ['Five-hour', claude.fiveHour]] as const) {
       text(label, true);
-      text(window.percent === null ? 'No reading yet.' : mark + percent(remaining(window.percent)) + ' remaining · ' + (window.resetsAt === null ? 'Reset time unknown, enter it below' : resetLabel(window.resetsAt)));
+      text(window.percent === null ? 'No reading yet.' : mark + percent(remaining(window.percent)) + ' remaining · ' + (window.resetsAt === null ? 'Reset time unknown, enter it below' : reset(window.resetsAt)));
     }
-    if (claude.anchor) text('Scaled to the ' + (claude.anchor.source === 'manual' ? 'reading you entered' : 'exact Claude Code reading') + ' at ' + resetLabel(Math.floor(claude.anchor.at / 1000)) + '.');
+    if (claude.anchor) text('Scaled to the ' + (claude.anchor.source === 'manual' ? 'reading you entered' : 'exact Claude Code reading') + ' at ' + reset(Math.floor(claude.anchor.at / 1000)) + '.');
     for (const [label, window, length, key] of [['Weekly', claude.weekly, WEEK_MS, 'claude-week'], ['Five-hour', claude.fiveHour, FIVE_HOUR_MS, 'claude-5h']] as const) {
       const pace = paceOf(window.percent, window.resetsAt, length);
       const forecast = forecastText(state.forecast[key]);
@@ -176,7 +178,7 @@ function renderDetails(): void {
     if (snap) {
       text(periodNames[snap.period].long + ' allowance', true);
       text(snap.remainingPercent === null ? 'Remaining percentage not reported.' : percent(snap.remainingPercent) + ' remaining');
-      text(resetLabel(snap.resetsAt));
+      text(reset(snap.resetsAt));
       const grokPace = paceOf(snap.usedPercent, snap.resetsAt, snap.period === 'daily' ? 86400000 : snap.period === 'monthly' ? 30 * 86400000 : WEEK_MS);
       if (grokPace) text(grokPace.elapsedPercent + '% of the window has passed: ' + grokPace.label + '.');
       const grokForecast = forecastText(state.forecast.grok); if (grokForecast) text(grokForecast);

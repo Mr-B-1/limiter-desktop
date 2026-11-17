@@ -14,7 +14,8 @@ import { Coordinator } from './services/scheduler.js';
 import { PreferenceStore, clampBounds, COMPACT_SIZE, parsePreferences, type Preferences } from './services/store.js';
 import { DesktopSurface } from './services/desktop.js';
 import { nativeMachine } from './services/emulation.js';
-import { DOWNLOAD_PAGE, wrongBuildForPc } from './shared/platform.js';
+import { DOWNLOAD_PAGE, displayTimeZone, wrongBuildForPc } from './shared/platform.js';
+import { windowsZoneId } from './services/windows-zone.js';
 import { resizeBounds, resizeEdges, type ResizeEdge } from './services/resize.js';
 import type { Bounds } from './services/store.js';
 import { ClaudeProvider, claudePipe } from './providers/claude.js';
@@ -40,6 +41,8 @@ const stateRoot = testing ? (smokeProfile && path.isAbsolute(smokeProfile) ? smo
 const APP_ID = 'Limiter.Desktop';
 // An x64 build on an ARM64 PC only shows a message, so it keeps its browser data in a temporary folder, away from a running Limiter's.
 const wrongBuild = wrongBuildForPc(process.arch, nativeMachine());
+// Every time this app shows uses this zone, in this process and in the window.
+const timeZone = displayTimeZone(Intl.DateTimeFormat().resolvedOptions().timeZone, windowsZoneId);
 const chromiumRoot = wrongBuild ? path.join(os.tmpdir(), 'Limiter-wrong-build') : path.join(stateRoot, 'chromium');
 app.setPath('userData', chromiumRoot);
 app.setPath('sessionData', chromiumRoot);
@@ -107,7 +110,7 @@ function display(): DisplayState {
   return { status: coordinator?.status || 'loading', snapshot: coordinator?.snapshot || null,
     ageMs: coordinator?.ageMs ?? null, stale: coordinator?.stale || false, refreshing: coordinator?.refreshing || false,
     cooldownMs: coordinator?.cooldownMs || 0, pinned: false,
-    theme: preferences?.theme || 'system', settingsNotice, desktopAttached: desktop?.attached || false,
+    theme: preferences?.theme || 'system', settingsNotice, desktopAttached: desktop?.attached || false, timeZone,
     claude: estimator?.view(exactClaude().state, exactClaude().source ? { source: exactClaude().source!, host: exactClaude().host } : null) || { mode: 'scanning', weekly: { percent: null, resetsAt: null },
       fiveHour: { percent: null, resetsAt: null }, ageMs: null, anchor: null, coverage: { files: 0, replies: 0, unknownModels: 0 }, refreshing: false, exact: null },
     grok: grok?.state() || { status: 'loading', snapshot: null, stale: false, refreshing: false },
@@ -208,7 +211,7 @@ async function recordLaunch(kind: LaunchRecord['kind'], detail?: string): Promis
     let existing: unknown = [];
     // A missing or unreadable history starts fresh; appendLaunch drops malformed entries.
     try { existing = JSON.parse(await fs.readFile(launchesFile, 'utf8')); } catch { existing = []; }
-    const history = appendLaunch(existing, { at: localStamp(new Date()), uptimeMinutes: Math.round(os.uptime() / 6) / 10, kind, ...(detail ? { detail } : {}) });
+    const history = appendLaunch(existing, { at: localStamp(new Date(), timeZone), uptimeMinutes: Math.round(os.uptime() / 6) / 10, kind, ...(detail ? { detail } : {}) });
     await fs.mkdir(stateRoot, { recursive: true });
     await fs.writeFile(launchesFile, JSON.stringify(history, null, 2) + '\n');
   } catch (error) {
@@ -219,9 +222,9 @@ async function launchHistory(): Promise<unknown> {
   try { return JSON.parse(await fs.readFile(launchesFile, 'utf8')); } catch { return null; }
 }
 async function diagnostic(): Promise<void> {
-  const verifiedAt = localStamp(new Date());
+  const verifiedAt = localStamp(new Date(), timeZone);
   await fs.writeFile(path.join(stateRoot, 'last-diagnostic.json'), JSON.stringify({ version: app.getVersion(), executable: process.execPath, pid: process.pid,
-    verifiedAt, desktop: desktop?.inspect() || null, duplicateLaunches, hiddenByUser,
+    verifiedAt, timeZone: timeZone ?? null, desktop: desktop?.inspect() || null, duplicateLaunches, hiddenByUser,
     providers: { codex: coordinator?.status, claude: claude?.state().status, grok: grok?.state().status }, storage: storage?.state(), toastsShown: receiptToasts, gatePaused: gate?.paused ?? null,
     launchGuard: { insidePackage: insidePackage(), startedByAgent: startedByAgent() }, stateRoot, migratedLegacyState,
     claudeSampleReceived: !!claude?.state().sample, claudeMode: display().claude.mode, claudeCoverage: display().claude.coverage,
@@ -520,6 +523,7 @@ async function smoke(): Promise<void> {
     if (!store.fresh || firstRun || !firstRunPanel.open || !firstRunPanel.settings) throw new Error('A fresh profile did not open Settings once');
     await window.webContents.executeJavaScript('document.getElementById("close-details").click()');
     receipt.firstRun = firstRunPanel;
+    receipt.timeZone = timeZone ?? null;
     const selected = first.snapshot?.windows.find(item => item.key === first.snapshot?.selectedKey);
     if (selected?.remainingPercent !== null && selected?.remainingPercent !== undefined && isolation.percent !== String(selected.remainingPercent) + '% left') throw new Error('Displayed remaining percentage disagrees with source snapshot');
     const native = desktop!.inspect();

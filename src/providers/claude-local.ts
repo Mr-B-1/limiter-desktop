@@ -294,7 +294,7 @@ export class ClaudeEstimator {
     this.scanner = new ClaudeLogScanner(root);
   }
   start(): void { this.stopped = false; void this.refresh(); }
-  // B set a 15-minute cadence on October 9, 2026 PST; Refresh, readings and exact samples rescan sooner.
+  // Scheduled scans run every 15 minutes; Refresh, readings and exact samples rescan sooner.
   refresh(): Promise<void> {
     if (this.stopped) return Promise.resolve();
     if (this.scanning) return this.scanning;

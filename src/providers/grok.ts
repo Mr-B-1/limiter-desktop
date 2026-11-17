@@ -125,7 +125,7 @@ export class GrokProvider {
   private stopped = false;
   private scope: string | null = null;
   private lastReadMono = 0;
-  // A dead sign-in, a missing setup or a changed source does not fix itself; scheduled reads stop until B presses Refresh.
+  // A dead sign-in, a missing setup or a changed source does not fix itself; scheduled reads stop until the user presses Refresh.
   private held = false;
   private paused = false;
   // Main passes a transport bound to the user's grokcli folder; without one the row stays in setup.
