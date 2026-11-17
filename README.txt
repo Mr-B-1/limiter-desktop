@@ -1,5 +1,5 @@
 Limiter, quick start
-====================
+--------------------
 
 Limiter is a small widget that sits on your Windows desktop. It shows how much is left of your
 Codex, Claude Code and Grok allowances, which of your projects used them this week, and free disk space.

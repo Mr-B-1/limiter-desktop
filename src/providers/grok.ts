@@ -73,7 +73,7 @@ export function fromCli(summary: unknown): unknown {
 }
 // grokcli exit codes: 1 general error, 3 sign-in or plan denied, 4 quota or rate limit, 5 timeout, 6 network (grokcli/errors.py ExitCode).
 // Exit 1 includes xAI server errors left after grokcli's own retries; it is transient, so it retries on the next read instead of
-// holding the row until Refresh (B's Grok row stayed hidden for a day on November 12, 2026 PST). Exit 2, a changed CLI, still holds.
+// holding the row until Refresh (one bad read once hid the Grok row for a day). Exit 2, a changed CLI, still holds.
 const EXIT_STATUS: Record<number, GrokState['status']> = { 1: 'offline', 4: 'throttled', 5: 'timeout', 6: 'offline' };
 // Exit 3 covers both a dead sign-in and a plan without access; grokcli's error JSON says which.
 export function reloginRequired(stderr: string): boolean | null {

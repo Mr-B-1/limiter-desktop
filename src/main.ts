@@ -393,7 +393,7 @@ async function boot(): Promise<void> {
   session.defaultSession.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));
   session.defaultSession.setPermissionCheckHandler(() => false);
   session.defaultSession.webRequest.onBeforeRequest((details, callback) => callback({ cancel: !details.url.startsWith('limiter://widget/') }));
-  // Display events can arrive while a native call runs (GUARDRAILS rule 49), so the clamp runs on the next turn.
+  // Display events can arrive while a native call runs (see services/native-guard.ts), so the clamp runs on the next turn.
   const clamp = () => { setTimeout(() => { if (window && !window.isDestroyed() && desktop?.attached) desktop.setBounds(clampBounds(desktop.bounds(), screen.getAllDisplays().map(display => display.workArea))); }, 0); };
   screen.on('display-removed', clamp);
   screen.on('display-metrics-changed', clamp);
@@ -723,7 +723,7 @@ const relay = relayArgs(process.argv);
 const sandboxed = !testing && (insidePackage() || startedByAgent());
 const shortcut = startupShortcut();
 if (wrongBuild) {
-  // Point an ARM64 PC at the ARM64 download instead of crashing in x64 emulation (GUARDRAILS rule 49).
+  // Point an ARM64 PC at the native ARM64 download instead of running this build under x64 emulation.
   if (testing) { console.error('Limiter x64 build on an ARM64 PC: use the ARM64 build'); app.exit(3); }
   else void app.whenReady().then(async () => {
     const choice = dialog.showMessageBoxSync({ type: 'info', title: 'Limiter', buttons: ['Open the download page', 'Close'], defaultId: 0, cancelId: 1,
