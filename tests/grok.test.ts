@@ -78,7 +78,7 @@ test('Grok reader runs only grokcli quota, maps its exit codes and needs Python 
     const ok = await readGrokQuota(root, python);
     assert.equal(ok.ok, true);
     assert.equal(ok.ok && parseGrok(ok.summary).remainingPercent, 91);
-    for (const [code, status] of [[3, 'signed-out'], [4, 'throttled'], [5, 'timeout'], [6, 'offline'], [2, 'compatibility']] as const) {
+    for (const [code, status] of [[1, 'offline'], [3, 'signed-out'], [4, 'throttled'], [5, 'timeout'], [6, 'offline'], [2, 'compatibility']] as const) {
       await fake('sys.stderr.write("secret-token-text")\nsys.exit(' + code + ')\n');
       assert.deepEqual(await readGrokQuota(root, python), { ok: false, status });
     }
@@ -91,4 +91,23 @@ test('Grok reader runs only grokcli quota, maps its exit codes and needs Python 
     await fake('print("not json")\n');
     assert.deepEqual(await readGrokQuota(root, python), { ok: false, status: 'compatibility' });
   } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test('a general grokcli error is transient: the last reading stays and the next scheduled read recovers without Refresh', async () => {
+  let now = 100000;
+  let result: GrokRead = { ok: true, scope: '', summary: weekly };
+  const provider = new GrokProvider(() => {}, async () => result, () => now);
+  await provider.refresh('scheduled');
+  // What readGrokQuota returns for exit 1, such as an xAI server error.
+  result = { ok: false, status: 'offline' };
+  now += 10001;
+  await provider.refresh('scheduled');
+  assert.equal(provider.state().status, 'offline');
+  assert.equal(provider.state().snapshot?.usedPercent, 42.5);
+  result = { ok: true, scope: '', summary: { ...weekly, usedPercent: 50, remainingPercent: 50 } };
+  now += 15 * 60000;
+  await provider.refresh('scheduled');
+  assert.equal(provider.state().status, 'ready');
+  assert.equal(provider.state().snapshot?.usedPercent, 50);
+  await provider.stop();
 });
