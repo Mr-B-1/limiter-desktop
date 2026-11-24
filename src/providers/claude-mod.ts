@@ -105,8 +105,10 @@ export class ClaudeModReader {
   }
 }
 
-// Of the two exact feeds (status-line pipe, mod file), the most recently observed reading wins.
+// Prefer a usable exact reading, then the most recently observed feed.
 export function newestExact(pipe: ClaudeState, mod: ModState): { state: ClaudeState; source: 'status-line' | 'mod' | null; host: string | null } {
+  const usable = (state: ClaudeState) => state.status === 'ready' && !!(state.sample?.fiveHour || state.sample?.sevenDay);
+  if (usable(pipe) !== usable(mod)) return usable(mod) ? { state: mod, source: 'mod', host: mod.host } : { state: pipe, source: 'status-line', host: null };
   const pipeAt = pipe.sample?.observedAt ?? -Infinity;
   const modAt = mod.sample?.observedAt ?? -Infinity;
   if (pipeAt === -Infinity && modAt === -Infinity) return { state: pipe.status === 'unavailable' ? pipe : mod, source: null, host: null };

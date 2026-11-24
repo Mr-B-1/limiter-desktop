@@ -1,6 +1,6 @@
 # Limiter
 
-A small Windows desktop widget that shows how much is left of your Codex, Claude Code and Grok allowances, which of your projects used them this week, and free disk space.
+A small Windows desktop widget that shows how much is left of your Codex, Claude Code, Grok and Antigravity allowances, which of your projects used them this week, and free disk space.
 
 ## Download
 
@@ -22,6 +22,7 @@ The app is not code-signed, so Windows SmartScreen shows "Windows protected your
 | Codex | The account quota that your signed-in Codex CLI reports |
 | Claude Code | Claude Code's own figures through the optional mod in this repository's `mods/limiter-usage` folder (not in the zip), or an estimate from local Claude Code logs |
 | Grok | Your SuperGrok allowance through a signed-in grokcli folder (hidden until you set one) |
+| Antigravity | Model-pool quota read from Antigravity's local language server while it is running (hidden when not installed) |
 | Disk | Free space on this PC's system drive, plus an optional second disk read over SSH |
 | Projects | Inside the Claude Code and Codex details: the top five projects of the current window, by share of price-weighted use |
 
@@ -36,7 +37,7 @@ Open Settings with the dots button. You can set:
 
 ## Privacy
 
-Limiter reads local files on your PC and the quota the Codex CLI and grokcli report. A remote disk, if you add one, is read with one read-only command over your own SSH setup. It never reads, stores or renews sign-in tokens and sends no usage data anywhere.
+Limiter reads local files on your PC and the quota reported by the Codex CLI, grokcli, and Antigravity's local language server on `127.0.0.1`. For Antigravity, it reads the loopback port and per-process request token from `~/.gemini/antigravity/daemon/hub_*.json` solely to query that local server; that token is never stored, logged, or sent elsewhere, and account profile fields in the reply are discarded. A remote disk, if you add one, is read with one read-only command over your own SSH setup. Limiter never reads, stores, or renews account sign-in tokens and sends no usage data anywhere.
 
 ## Build from source
 

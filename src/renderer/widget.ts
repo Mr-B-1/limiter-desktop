@@ -21,11 +21,15 @@ const grokLabels: Record<DisplayState['grok']['status'], string> = {
   setup:'Set up grokcli', loading:'Connecting', ready:'Current read', 'signed-out':'Sign in to grokcli', offline:'Offline',
   unauthorized:'Plan not eligible', throttled:'Cooling down', timeout:'Read timed out', compatibility:'Source changed'
 };
+const antigravityLabels: Record<DisplayState['antigravity']['status'], string> = {
+  absent:'Not installed', closed:'Open Antigravity to refresh', loading:'Connecting', ready:'Current read', 'signed-out':'Sign in to Antigravity',
+  timeout:'Read timed out', compatibility:'Source changed'
+};
 const periodNames = { weekly: { short:'week', long:'Weekly' }, monthly: { short:'month', long:'Monthly' }, daily: { short:'day', long:'Daily' }, unknown: { short:'sub', long:'Period' } };
 let current: DisplayState | null = null;
 // Formats a reset or run-out time in the zone the main process resolved, which can differ from this window's ICU default.
 function reset(epochSeconds: number | null): string { return resetLabel(epochSeconds, current?.timeZone); }
-let panel: 'codex' | 'claude' | 'grok' | 'storage' | 'settings' | null = null;
+let panel: 'codex' | 'claude' | 'grok' | 'antigravity' | 'storage' | 'settings' | null = null;
 const percent = (value: number | null) => value === null ? '··' : String(Math.round(value * 10) / 10) + '%';
 const remaining = (used: number | null) => used === null ? null : Math.max(0, 100 - used);
 function renderStorage(state: StorageState): void {
@@ -70,7 +74,7 @@ function metaWithLeader(id: string, base: string, short: string, view: DisplaySt
   }
 }
 function projectLines(view: DisplayState['projects']['claude'], text: (value: string, heading?: boolean) => void): void {
-  text('By project this week', true);
+  text('By project · weighted local usage', true);
   if (!view.rows.length) text(view.coverage === null && view.totalUnits === 0 ? 'No project usage recorded in this window yet.' : 'No project usage in this window.');
   for (const row of view.rows) text(projectName(row.name) + ' · ' + row.share + '% · ' + compactTokens(row.tokens) + ' tokens');
   if (view.status === 'degraded' && view.coverage) text(view.coverage.unreadable + ' sessions unreadable, ' + view.coverage.skipped + ' skipped, ' + view.coverage.malformedLines + ' malformed lines.');
@@ -79,6 +83,57 @@ function forecastText(view: DisplayState['forecast'][keyof DisplayState['forecas
   if (!view) return null;
   if (view.pastReset || view.emptyAt === null) return 'At the last hour\'s pace it lasts past the reset.';
   return 'At the last hour\'s pace it runs out at ' + reset(Math.floor(view.emptyAt / 1000)) + '.';
+}
+// Antigravity reports one quota per pool of models and the pool count can change, so its cards are built here, before the disk rows.
+function antigravityCard(index: number): HTMLElement {
+  const id = 'ag-' + index;
+  const existing = document.getElementById(id + '-card');
+  if (existing) return existing;
+  const node = (tag: string, className = '', nodeId = '') => { const made = document.createElement(tag); if (className) made.className = className; if (nodeId) made.id = nodeId; return made; };
+  const card = node('button', 'card antigravity-card', id + '-card');
+  const name = node('span', 'name');
+  name.append(node('i', 'dot antigravity'), 'Antigravity', node('small', '', id + '-pool'));
+  const top = node('span', 'row');
+  top.append(name, node('strong', '', id + '-percent'));
+  const bar = node('span', 'meter antigravity-meter', id + '-meter');
+  bar.setAttribute('role', 'progressbar'); bar.setAttribute('aria-valuemin', '0'); bar.setAttribute('aria-valuemax', '100');
+  bar.append(node('span', '', id + '-fill'));
+  const meta = node('span', 'row meta');
+  meta.append(node('span', '', id + '-meta'), node('span', '', id + '-reset'));
+  card.append(top, bar, meta);
+  card.addEventListener('click', () => openPanel('antigravity'));
+  element('local-card').before(card);
+  return card;
+}
+function renderAntigravity(state: DisplayState['antigravity']): void {
+  const snap = state.snapshot;
+  const pools = snap?.pools || [];
+  // No install, or the first read still running, hides the rows, so a PC without Antigravity never flashes one; after that,
+  // no reading shows one row with the status.
+  const count = state.status === 'absent' || (state.status === 'loading' && !snap) ? 0 : Math.max(1, pools.length);
+  for (let index = 0; index < count; index++) {
+    const id = 'ag-' + index;
+    const card = antigravityCard(index);
+    const pool = pools[index];
+    const passed = !!pool && pool.resetsAt !== null && pool.resetsAt * 1000 <= Date.now();
+    const left = !pool || passed ? null : pool.remainingPercent;
+    card.hidden = false;
+    // A reading kept from a closed app is greyed and carries its age until the reset passes.
+    card.dataset.stale = String(!!pool && state.stale && !passed);
+    element(id + '-pool').textContent = pool?.name || 'plan';
+    element(id + '-percent').textContent = left === null ? '··' : percent(left) + ' left';
+    meter(id + '-meter', id + '-fill', left);
+    element(id + '-meter').setAttribute('aria-label', 'Antigravity ' + (pool?.name || 'plan') + ' quota remaining');
+    const meta = !pool ? (state.status === 'ready' ? 'No model quota reported' : antigravityLabels[state.status]) :
+      passed ? (state.status === 'closed' ? 'Open Antigravity to refresh' : 'Reset passed, awaiting data') :
+      state.stale && snap ? 'Stale · ' + ageLabel(Date.now() - snap.observedAt) :
+      pool.remainingPercent === null ? 'Percentage not reported' :
+      (snap?.plan ? snap.plan + ' plan' : 'Plan') + ' · ' + pool.models.length + (pool.models.length === 1 ? ' model' : ' models');
+    element(id + '-meta').textContent = meta;
+    element(id + '-reset').textContent = !passed && pool?.resetsAt ? countdown(pool.resetsAt).replace('Resets in ', '') : '';
+    card.setAttribute('aria-label', 'Antigravity ' + (pool?.name || 'plan') + ': ' + (left === null ? meta : percent(left) + ' left') + '. Open details.');
+  }
+  for (let index = count; document.getElementById('ag-' + index + '-card'); index++) element('ag-' + index + '-card').hidden = true;
 }
 function render(state: DisplayState): void {
   current = state;
@@ -114,10 +169,11 @@ function render(state: DisplayState): void {
   element('grok-meta').textContent = grokExpired ? 'Awaiting reset' : grok.snapshot && grok.stale ? 'Stale · ' + grokLabels[grok.status] : grok.status !== 'ready' ? grokLabels[grok.status] :
     grokLeft !== null ? periodNames[grok.snapshot?.period || 'unknown'].long + ' remaining' + paceTag(grokPace) : 'Percentage not reported';
   element('grok-reset').textContent = !grokExpired && grok.snapshot?.resetsAt ? countdown(grok.snapshot.resetsAt).replace('Resets in ', '') : '';
+  renderAntigravity(state.antigravity);
   renderStorage(state.storage);
   element('age').textContent = 'Codex · ' + ageLabel(state.ageMs).replace('Read ', '').replace('Awaiting first read','waiting');
   const refresh = element<HTMLButtonElement>('refresh');
-  refresh.disabled = state.refreshing || state.claude.refreshing || state.grok.refreshing || state.cooldownMs > 0;
+  refresh.disabled = state.refreshing || state.claude.refreshing || state.grok.refreshing || state.antigravity.refreshing || state.cooldownMs > 0;
   refresh.title = state.cooldownMs > 0 ? 'Refresh available in ' + Math.ceil(state.cooldownMs / 1000) + ' seconds' : 'Refresh usage';
   // Grok needs the user's grokcli folder; without one its row is hidden.
   element('grok-card').hidden = !state.config.grokcliRoot;
@@ -131,7 +187,7 @@ function renderDetails(): void {
   const state = current;
   const content = element('details-content'); content.replaceChildren();
   const text = (value: string, heading = false) => { const line = document.createElement(heading ? 'h2' : 'p'); line.textContent = value; content.append(line); };
-  element('details-title').textContent = { codex:'Codex limits', claude:'Claude Code limits', grok:'Grok subscription', storage:'Free disk space', settings:'Settings' }[panel];
+  element('details-title').textContent = { codex:'Codex limits', claude:'Claude Code limits', grok:'Grok subscription', antigravity:'Antigravity plan quota', storage:'Free disk space', settings:'Settings' }[panel];
   element('settings').hidden = panel !== 'settings';
   // Static form outside the re-rendered content, so typing survives the once-a-second state push.
   element('claude-calibrate').hidden = panel !== 'claude';
@@ -186,6 +242,23 @@ function renderDetails(): void {
     if (grok.status === 'signed-out') text('Sign in again: in your grokcli folder run python -m grokcli login, then refresh.');
     if (grok.status === 'setup') text('Needs Python on the PATH and your grokcli folder, chosen in Settings.');
     text('Reads your subscription allowance through grokcli.');
+  } else if (panel === 'antigravity') {
+    const agy = state.antigravity;
+    const snap = agy.snapshot;
+    text('Read from the Antigravity app on this PC every 5 minutes while it is open. ' + antigravityLabels[agy.status] + (snap ? ' · ' + ageLabel(Date.now() - snap.observedAt) + (agy.stale ? ' · stale' : '') : '') + '.');
+    if (snap?.plan) text('Plan: ' + snap.plan + '.');
+    for (const pool of snap?.pools || []) {
+      text(pool.name, true);
+      const passed = pool.resetsAt !== null && pool.resetsAt * 1000 <= Date.now();
+      text(passed ? 'Reset passed, awaiting new data.' : pool.remainingPercent === null ? 'Remaining percentage not reported.' : percent(pool.remainingPercent) + ' remaining');
+      text(reset(pool.resetsAt));
+      text(pool.models.join(', '));
+    }
+    if (snap && !snap.pools.length) text('Antigravity reported no model quota.');
+    if (agy.status === 'closed') text('Open Antigravity to refresh. Limiter can read the quota only while the app runs.');
+    if (agy.status === 'signed-out') text('Sign in to Antigravity, then refresh.');
+    if (agy.status === 'compatibility') text('Antigravity changed how it reports quota, so Limiter needs an update.');
+    text('Models that share one remaining amount and one reset time draw on one pool, so each pool is one row.');
   } else if (panel === 'storage') {
     for (const id of diskIds) {
       const { status, reading, label, volume } = state.storage[id];
@@ -209,12 +282,16 @@ function openPanel(value: typeof panel): void {
   element('settings-toggle').setAttribute('aria-expanded', String(value !== null));
   renderDetails();
 }
-// Settings fields are refreshed from state only while the user is not typing in them.
+// A field that differs from its last rendered setting is a draft, even after focus moves elsewhere.
 function renderSettings(state: DisplayState): void {
   const config = state.config;
   element('projects-root').textContent = config.projectsRoot || 'not set';
   element('grokcli-root').textContent = config.grokcliRoot || 'not set, Grok row hidden';
-  const fill = (id: string, value: string) => { const input = element<HTMLInputElement>(id); if (document.activeElement !== input) input.value = value; };
+  const fill = (id: string, value: string) => {
+    const input = element<HTMLInputElement>(id);
+    if (input.value === input.defaultValue) input.value = value;
+    input.defaultValue = value;
+  };
   fill('local-disk-label', config.localDiskLabel || '');
   element<HTMLInputElement>('local-disk-label').placeholder = config.pcName;
   fill('remote-disk-label', config.remoteDisk?.label || '');
@@ -249,7 +326,12 @@ element('save-disks').addEventListener('click', () => {
   settingsAction(() => window.limiter.updateSettings({ localDiskLabel: value('local-disk-label') || null,
     ...(host ? { remoteDisk: { host, label: value('remote-disk-label') || host } } : {}) }), 'Disk names saved.');
 });
-element('clear-remote').addEventListener('click', () => settingsAction(() => window.limiter.updateSettings({ remoteDisk: null }), 'Remote disk removed.'));
+element('clear-remote').addEventListener('click', () => settingsAction(async () => {
+  await window.limiter.updateSettings({ remoteDisk: null });
+  for (const id of ['remote-disk-label', 'remote-disk-host']) {
+    const input = element<HTMLInputElement>(id); input.value = ''; input.defaultValue = '';
+  }
+}, 'Remote disk removed.'));
 element<HTMLInputElement>('start-with-windows').addEventListener('change', event =>
   settingsAction(() => window.limiter.updateSettings({ startWithWindows: (event.target as HTMLInputElement).checked }), 'Start-up choice saved.'));
 element('claude-save').addEventListener('click', () => {

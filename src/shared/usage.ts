@@ -35,6 +35,7 @@ export interface DisplayState {
   desktopAttached: boolean;
   claude: import('../providers/claude-local.js').ClaudeView;
   grok: import('../providers/grok.js').GrokState;
+  antigravity: import('../providers/antigravity.js').AntigravityState;
   storage: import('./storage.js').StorageState;
   forecast: Record<'codex' | 'claude-week' | 'claude-5h' | 'grok', import('../services/forecast.js').ForecastView | null>;
   // Which projects used each provider's current window, from the local logs (plans/2026-10-20-token-counter-by-project-v1.md).

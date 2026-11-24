@@ -22,7 +22,7 @@ test('launch guard reads the package identity, keeps relay arguments and names t
   assert.equal(typeof insidePackage(), 'boolean');
   assert.equal(insidePackage(() => 15700), false); assert.equal(insidePackage(() => 122), true); assert.equal(insidePackage(null), false);
   assert.equal(insidePackage(() => { throw new Error('no api'); }), false);
-  assert.deepEqual(relayArgs(['Limiter.exe', '--quit', '--claude-weekly=80', '--force-device-scale-factor=1']), ['--quit', '--claude-weekly=80']);
+  assert.deepEqual(relayArgs(['Limiter.exe', '--quit', '--diagnose-projects', '--claude-weekly=80', '--force-device-scale-factor=1']), ['--quit', '--diagnose-projects', '--claude-weekly=80']);
   assert.equal(startupShortcut('C:\\Users\\x\\AppData\\Roaming'), 'C:\\Users\\x\\AppData\\Roaming\\Microsoft\\Windows\\Start Menu\\Programs\\Startup\\Limiter.lnk');
   assert.equal(startupShortcut(null), null);
   assert.equal(startedByAgent({ PATH: 'x' }), false);

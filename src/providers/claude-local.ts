@@ -1,8 +1,10 @@
 import { promises as fs } from 'node:fs';
+import { createHash } from 'node:crypto';
 import os from 'node:os';
 import path from 'node:path';
 import { record } from './protocol.js';
-import { projectLabel, type ProjectRoots } from '../shared/projects.js';
+import { projectInputFile, type ProjectInputFile } from '../services/project-input.js';
+import { projectKey, projectLabel, type ProjectRoots } from '../shared/projects.js';
 import type { ClaudeSample, ClaudeState } from './claude.js';
 
 // Anthropic API list prices, USD per million tokens (claude-api skill table cached 2026-10-06).
@@ -111,44 +113,49 @@ export class ClaudeLogScanner {
   constructor(private readonly root: string) {}
   get replies(): number { return this.events.size; }
   get unknownModels(): number { let count = 0; for (const event of this.events.values()) if (!event.known) count++; return count; }
-  async scan(now: number): Promise<void> {
+  async scan(now: number, audit?: ProjectInputFile[]): Promise<void> {
+    if (audit && this.cursors.size) throw new Error('Project verification requires a fresh log scan');
     const since = now - LOOKBACK_MS;
     await fs.access(this.root);
     const present = new Set<string>();
+    let incomplete = false;
     for (const file of await this.list(this.root, 0)) {
       try {
         const stat = await fs.stat(file);
         if (stat.mtimeMs < since) continue;
         present.add(file);
-        await this.read(file, stat.size);
-      } catch { /* A file being replaced is read on the next scan. */ }
+        await this.read(file, stat.size, stat.mtimeMs, audit);
+      } catch { incomplete = true; }
     }
     for (const file of this.cursors.keys()) if (!present.has(file)) this.cursors.delete(file);
     for (const [key, event] of this.events) if (event.at < since) this.events.delete(key);
     this.files = present.size;
     this.sorted = null;
+    if (incomplete) throw new Error('Claude Code logs could not be read completely');
   }
   private async list(directory: string, depth: number): Promise<string[]> {
     if (depth > 6) return [];
     const result: string[] = [];
-    for (const entry of await fs.readdir(directory, { withFileTypes: true }).catch(() => [])) {
+    for (const entry of await fs.readdir(directory, { withFileTypes: true })) {
       const full = path.join(directory, entry.name);
       if (entry.isDirectory()) result.push(...await this.list(full, depth + 1));
       else if (entry.isFile() && entry.name.endsWith('.jsonl')) result.push(full);
     }
     return result;
   }
-  private async read(file: string, size: number): Promise<void> {
+  private async read(file: string, size: number, mtimeMs: number, audit?: ProjectInputFile[]): Promise<void> {
     let cursor = this.cursors.get(file);
     // A shorter file was rewritten; rereading is safe because replies are keyed.
     if (!cursor || size < cursor.offset) { cursor = { offset: 0, remainder: Buffer.alloc(0), skipping: false }; this.cursors.set(file, cursor); }
-    if (size === cursor.offset) return;
+    if (size === cursor.offset && !audit) return;
+    const digest = audit && createHash('sha256');
     const handle = await fs.open(file, 'r');
     try {
       const chunk = Buffer.alloc(CHUNK_BYTES);
       while (cursor.offset < size) {
         const { bytesRead } = await handle.read(chunk, 0, Math.min(CHUNK_BYTES, size - cursor.offset), cursor.offset);
         if (bytesRead === 0) break;
+        digest?.update(chunk.subarray(0, bytesRead));
         cursor.offset += bytesRead;
         let data = cursor.remainder.length ? Buffer.concat([cursor.remainder, chunk.subarray(0, bytesRead)]) : chunk.subarray(0, bytesRead);
         let start = 0;
@@ -162,11 +169,15 @@ export class ClaudeLogScanner {
         if (data.length > MAX_LINE_BYTES) { cursor.skipping = true; data = Buffer.alloc(0); }
         cursor.remainder = Buffer.from(data);
       }
+      if (audit && digest) {
+        if (cursor.offset !== size) throw new Error('Claude log changed during project verification');
+        audit.push(projectInputFile(file, size, mtimeMs, digest));
+      }
     } finally { await handle.close(); }
   }
   private line(bytes: Buffer): void {
     // Most lines are prompts and tool output; skip decoding them unless they carry usage.
-    if (bytes.length < 40 || bytes.indexOf('"usage"') < 0) return;
+    if (bytes.length < 40 || bytes.length > MAX_LINE_BYTES || bytes.indexOf('"usage"') < 0) return;
     const parsed = parseLogLine(bytes.toString('utf8'));
     if (!parsed) return;
     // Input and cache counts repeat on every line of a reply, but output grows until the last line; keep the largest.
@@ -184,9 +195,10 @@ export class ClaudeLogScanner {
       if (event.at >= to) break;
       if (event.at < from) continue;
       const name = projectLabel(event.cwd, roots);
-      const total = totals.get(name) || { name, units: 0, tokens: 0 };
+      const key = projectKey(event.cwd, name);
+      const total = totals.get(key) || { name, units: 0, tokens: 0 };
       total.units += event.units; total.tokens += event.tokens;
-      totals.set(name, total);
+      totals.set(key, total);
     }
     return [...totals.values()].sort((a, b) => b.units - a.units || a.name.localeCompare(b.name));
   }
@@ -282,7 +294,7 @@ export function parseReadingInput(value: unknown, now: number): ClaudeReading {
 
 type Clock = () => { wall: number; mono: number };
 export class ClaudeEstimator {
-  private readonly scanner: ClaudeLogScanner;
+  private scanner: ClaudeLogScanner;
   private scanning: Promise<void> | null = null;
   private timer: NodeJS.Timeout | undefined;
   private scannedMono: number | null = null;
@@ -290,8 +302,8 @@ export class ClaudeEstimator {
   private stopped = true;
   private lastExactObservedAt = 0;
   constructor(private readonly changed: () => void, private readonly persist: (calibration: ClaudeCalibration) => void,
-    private calibration: ClaudeCalibration | null, root = claudeProjectsRoot(), private readonly clock: Clock = () => ({ wall: Date.now(), mono: performance.now() })) {
-    this.scanner = new ClaudeLogScanner(root);
+    private calibration: ClaudeCalibration | null, readonly logRoot = claudeProjectsRoot(), private readonly clock: Clock = () => ({ wall: Date.now(), mono: performance.now() })) {
+    this.scanner = new ClaudeLogScanner(logRoot);
   }
   start(): void { this.stopped = false; void this.refresh(); }
   // Scheduled scans run every 15 minutes; Refresh, readings and exact samples rescan sooner.
@@ -300,12 +312,18 @@ export class ClaudeEstimator {
     if (this.scanning) return this.scanning;
     clearTimeout(this.timer);
     this.timer = setTimeout(() => { void this.refresh(); }, SCAN_INTERVAL_MS);
-    this.scanning = this.scanner.scan(this.clock().wall)
-      .then(() => { this.available = true; this.scannedMono = this.clock().mono; })
-      .catch(() => { this.available = false; })
+    const scanner = this.scanner;
+    this.scanning = scanner.scan(this.clock().wall)
+      .then(() => { if (this.scanner === scanner) this.acceptProjectScan(scanner); })
+      .catch(() => { if (this.scanner === scanner) this.available = false; })
       .finally(() => { this.scanning = null; if (!this.stopped) this.changed(); });
     this.changed();
     return this.scanning;
+  }
+  acceptProjectScan(scanner: ClaudeLogScanner): void {
+    this.scanner = scanner;
+    this.available = true;
+    this.scannedMono = this.clock().mono;
   }
   projects(from: number, to: number, roots: ProjectRoots): ProjectTotal[] { return this.scanner.byProject(from, to, roots); }
   get coverage(): { files: number; replies: number } { return { files: this.scanner.files, replies: this.scanner.replies }; }

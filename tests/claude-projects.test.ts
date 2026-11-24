@@ -1,10 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { promises as fs } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { ClaudeLogScanner, parseLogLine, rawTokens } from '../src/providers/claude-local.js';
 import { OUTSIDE_LABEL, WORKSPACE_ROOT_LABEL, defaultRoots, projectLabel } from '../src/shared/projects.js';
+import type { ProjectInputFile } from '../src/services/project-input.js';
 
 const hour = 3600000;
 const roots = defaultRoots('C:\\Users\\user', 'C:\\Projects');
@@ -28,6 +30,26 @@ test('a parsed reply carries its working folder and raw token count; labels foll
   assert.equal(projectLabel('', roots), OUTSIDE_LABEL);
   assert.equal(rawTokens({ input_tokens: 1, output_tokens: 2, cache_read_input_tokens: 3, cache_creation_input_tokens: 4 }), 10);
 });
+
+test('a fresh audit binds the incomplete tail and normal refresh finishes it exactly once', async () => withLogs(async root => {
+  const now = Date.now();
+  const file = path.join(root, 'session.jsonl');
+  const complete = reply('one', now - 1000, 'C:\\Projects\\One') + '\n';
+  const second = reply('two', now - 500, 'C:\\Projects\\Two');
+  const prefix = complete + second.slice(0, 40);
+  await fs.writeFile(file, prefix);
+  const scanner = new ClaudeLogScanner(root);
+  const files: ProjectInputFile[] = [];
+  await scanner.scan(now, files);
+  assert.equal(scanner.replies, 1);
+  assert.equal(files.length, 1);
+  assert.equal(files[0].byteLimit, Buffer.byteLength(prefix));
+  assert.equal(files[0].sha256, createHash('sha256').update(prefix).digest('hex'));
+  await fs.appendFile(file, second.slice(40) + '\n');
+  await scanner.scan(now);
+  assert.deepEqual(scanner.byProject(now - hour, now, roots).map(row => [row.name, row.tokens]), [['One', 2000], ['Two', 2000]]);
+  await assert.rejects(scanner.scan(now, []), /fresh log scan/);
+}));
 
 test('byProject splits the window per project, keeps the first line\'s folder and the largest line\'s tokens, and regroups when the projects folder changes', async () => withLogs(async root => {
   const now = Date.UTC(2026, 9, 20, 15);

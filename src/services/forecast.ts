@@ -8,7 +8,10 @@ export class Forecast {
   constructor(private readonly now: () => number = () => Date.now()) {}
   // One reading per key per call; a new window (different resetsAt) starts its history over.
   observe(key: string, usedPercent: number | null, resetsAt: number | null): void {
-    if (usedPercent === null || resetsAt === null) { this.history.delete(key); return; }
+    if (usedPercent === null || resetsAt === null) {
+      for (const existing of this.history.keys()) if (existing.startsWith(key + ':')) this.history.delete(existing);
+      return;
+    }
     const scoped = key + ':' + resetsAt;
     for (const existing of this.history.keys()) if (existing.startsWith(key + ':') && existing !== scoped) this.history.delete(existing);
     const now = this.now();

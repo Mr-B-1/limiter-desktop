@@ -28,5 +28,5 @@ export function startupShortcut(appData: string | undefined | null = process.env
 }
 // Arguments meant for a running instance are kept; a plain launch is handed to Explorer, which starts it outside the package.
 export function relayArgs(argv: readonly string[]): string[] {
-  return argv.filter(arg => arg === '--quit' || arg === '--diagnose' || arg.startsWith('--claude-'));
+  return argv.filter(arg => arg === '--quit' || arg === '--diagnose' || arg === '--diagnose-projects' || arg.startsWith('--claude-'));
 }

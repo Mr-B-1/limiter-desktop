@@ -4,8 +4,10 @@ import { promises as fs } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import zlib from 'node:zlib';
-import { CODEX_WEIGHTS, CodexRolloutReader, increment, weightedUnits } from '../src/providers/codex-rollouts.js';
+import { createHash } from 'node:crypto';
+import { CODEX_WEIGHTS, CodexRolloutReader, codexRolloutRoots, codexSessionsRoot, increment, weightedUnits } from '../src/providers/codex-rollouts.js';
 import { CODEX_APP_LABEL, OUTSIDE_LABEL, defaultRoots } from '../src/shared/projects.js';
+import type { ProjectInputFile } from '../src/services/project-input.js';
 
 const roots = defaultRoots('C:\\Users\\user', 'C:\\Projects');
 const base = Date.UTC(2026, 9, 20, 12);
@@ -16,14 +18,14 @@ type Counts = [input: number, cached: number, output: number, reasoning: number,
 function usage([input, cached, output, reasoning, total]: Counts) {
   return { input_tokens: input, cached_input_tokens: cached, cache_write_input_tokens: 0, output_tokens: output, reasoning_output_tokens: reasoning, total_tokens: total };
 }
-function meta(id: string, cwd: string | null, at = base): string {
-  return JSON.stringify({ timestamp: new Date(at).toISOString(), type: 'session_meta', payload: { id, session_id: id, cwd, cli_version: '0.0.0-test', originator: 'test' } });
+function meta(id: string, cwd: string | null, at = base, forkedFrom?: string): string {
+  return JSON.stringify({ timestamp: new Date(at).toISOString(), type: 'session_meta', payload: { id, session_id: id, cwd, forked_from_id: forkedFrom, cli_version: '0.0.0-test', originator: 'test' } });
 }
-function turn(cwd: string, at = base): string {
-  return JSON.stringify({ timestamp: new Date(at).toISOString(), type: 'turn_context', payload: { cwd, model: 'gpt-test', summary: 'x' } });
+function turn(cwd: string, at = base, turnId?: string): string {
+  return JSON.stringify({ timestamp: new Date(at).toISOString(), type: 'turn_context', payload: { cwd, turn_id: turnId, model: 'gpt-test', summary: 'x' } });
 }
-function event(counts: Counts, at: number): string {
-  return JSON.stringify({ timestamp: new Date(at).toISOString(), type: 'event_msg', payload: { type: 'token_count', info: { total_token_usage: usage(counts), last_token_usage: usage(counts), model_context_window: 258400 }, rate_limits: null } });
+function event(counts: Counts, at: number, last: Counts = counts): string {
+  return JSON.stringify({ timestamp: new Date(at).toISOString(), type: 'event_msg', payload: { type: 'token_count', info: { total_token_usage: usage(counts), last_token_usage: usage(last), model_context_window: 258400 }, rate_limits: null } });
 }
 function rollout(id: string, cwd: string | null, events: Counts[], start = base): string {
   return [meta(id, cwd, start), turn(cwd || 'C:\\x', start), ...events.map((counts, index) => event(counts, start + (index + 1) * minute))].join('\n') + '\n';
@@ -80,7 +82,7 @@ test('a mid-session reset counts both runs and a repeated total adds nothing', a
   assert.equal(events[5].tokens, 217786);
 }));
 
-test('a compressed copy of the same session counts once and the newest file owns it', async () => withRoot(async (root, reader) => {
+test('overlapping plain and compressed copies count once without losing a longer history when a shorter copy is touched', async () => withRoot(async (root, reader) => {
   const plain = await write(root, 'same.jsonl', rollout('s-same', 'C:\\Projects\\Beta', TWO_EVENTS), base);
   await write(root, 'same.jsonl.zst', zlib.zstdCompressSync(Buffer.from(rollout('s-same', 'C:\\Projects\\Beta', [...TWO_EVENTS, [70000, 36000, 200, 100, 70200]]))), base + minute);
   await reader.scan(base + 10 * minute);
@@ -88,11 +90,266 @@ test('a compressed copy of the same session counts once and the newest file owns
   assert.equal(reader.coverage().sessions, 1);
   assert.equal(reader.coverage().files, 2);
   assert.equal(reader.counts.decompressions, 1);
-  // The plain file touched later becomes the owner again.
+  // A filesystem touch is not evidence that the shorter history supersedes the longer one.
   await fs.utimes(plain, new Date(base + 2 * minute), new Date(base + 2 * minute));
   await reader.scan(base + 10 * minute);
-  assert.deepEqual(tokensOf(reader).map(row => [row[0], row[1]]), [['Beta', 63856]]);
+  assert.deepEqual(tokensOf(reader).map(row => [row[0], row[1]]), [['Beta', 70200]]);
   assert.equal(reader.counts.decompressions, 1);
+}));
+
+test('overlapping partial copies merge counters before computing deltas and filtering the time window', async () => withRoot(async (root, reader) => {
+  const first: Counts = [100, 20, 10, 5, 110], second: Counts = [200, 40, 20, 10, 220], third: Counts = [300, 60, 30, 15, 330];
+  await write(root, 'beginning.jsonl', rollout('s-overlap', 'C:\\Projects\\Alpha', [first, second]), base + 5 * minute);
+  await write(root, 'ending.jsonl.zst', zlib.zstdCompressSync(Buffer.from([
+    meta('s-overlap', 'C:\\Projects\\Alpha'), event(second, base + 2 * minute), event(third, base + 3 * minute)
+  ].join('\n') + '\n')), base);
+  await reader.scan(base + 10 * minute);
+  assert.deepEqual(tokensOf(reader).map(row => [row[0], row[1]]), [['Alpha', 330]]);
+  assert.equal(reader.events(base - minute, base + 10 * minute).length, 3);
+  assert.deepEqual(tokensOf(reader, base + 2 * minute, base + 3 * minute).map(row => [row[0], row[1]]), [['Alpha', 110]]);
+}));
+
+test('each turn uses its valid absolute cwd and an invalid turn cwd falls back to session metadata', async () => withRoot(async (root, reader) => {
+  const values = (value: number): Counts => [value, 0, 0, 0, value];
+  await write(root, 'turns.jsonl', [
+    meta('s-turns', 'C:\\Projects\\Alpha'), event(values(100), base + minute),
+    turn('C:\\Projects\\Beta', base + 2 * minute), event(values(300), base + 2 * minute),
+    turn('relative\\folder', base + 3 * minute), event(values(600), base + 3 * minute),
+    turn('C:drive-relative', base + 4 * minute), event(values(1000), base + 4 * minute),
+    turn('C:\\Projects\\Gamma', base + 5 * minute), event(values(1500), base + 5 * minute)
+  ].join('\n') + '\n');
+  await reader.scan(base + 10 * minute);
+  assert.deepEqual(tokensOf(reader).map(row => [row[0], row[1]]), [['Alpha', 800], ['Gamma', 500], ['Beta', 200]]);
+}));
+
+test('Codex path attribution normalizes extended Windows paths and dot segments while preserving path boundaries', async () => withRoot(async (root, reader) => {
+  const values: Counts[] = [[100, 0, 0, 0, 100]];
+  for (const [index, cwd] of [
+    '\\\\?\\C:\\Projects\\Alpha\\..\\Beta\\src', 'c:/Projects/Beta/./docs',
+    '\\\\?\\C:\\Projects2\\Beta', 'C:Projects\\Beta', 'not/a/path'
+  ].entries()) await write(root, `path-${index}.jsonl`, [meta(`s-path-${index}`, cwd), event(values[0], base + minute)].join('\n') + '\n');
+  await write(root, 'unc.jsonl', [meta('s-unc', '\\\\?\\UNC\\server\\share\\Projects\\Delta\\src'), event(values[0], base + minute)].join('\n') + '\n');
+  await reader.scan(base + 10 * minute);
+  assert.deepEqual(tokensOf(reader).map(row => [row[0], row[1]]), [[OUTSIDE_LABEL, 400], ['Beta', 200]]);
+  const unc = reader.byProject(base, base + 10 * minute, { workspace: '\\\\server\\share\\Projects', codexApp: 'C:\\Unused' });
+  assert.equal(unc.find(row => row.name === 'Delta')?.tokens, 100);
+  const extendedRoot = reader.byProject(base, base + 10 * minute, { workspace: '\\\\?\\C:\\Projects', codexApp: 'C:\\Unused' });
+  assert.equal(extendedRoot.find(row => row.name === 'Beta')?.tokens, 200);
+}));
+
+test('an out-of-window baseline is retained across reset, repeat, and incremental reads', async () => withRoot(async (root, reader) => {
+  const file = await write(root, 'baseline.jsonl', [
+    meta('s-baseline', 'C:\\Projects\\Alpha'), event([1000, 500, 100, 50, 1100], base - 10 * minute),
+    event([1100, 550, 110, 55, 1210], base + minute), event([1100, 550, 110, 55, 1210], base + 2 * minute)
+  ].join('\n') + '\n', base);
+  await reader.scan(base + 10 * minute);
+  assert.equal(reader.events(base, base + 10 * minute).reduce((sum, item) => sum + item.tokens, 0), 110);
+  await fs.appendFile(file, event([50, 20, 5, 1, 55], base + 3 * minute) + '\n');
+  await reader.scan(base + 10 * minute);
+  assert.equal(reader.events(base, base + 10 * minute).reduce((sum, item) => sum + item.tokens, 0), 165);
+  assert.equal(reader.counts.offsetReads, 1);
+}));
+
+const PARENT_ID = '11111111-1111-4111-8111-111111111111';
+const CHILD_ID = '22222222-2222-4222-8222-222222222222';
+const ONE: Counts = [100, 20, 10, 5, 110];
+const TWO: Counts = [200, 40, 20, 10, 220];
+const THREE: Counts = [300, 60, 30, 15, 330];
+
+test('the filename owner retains fresh fork counters despite a foreign parent metadata record', async () => withRoot(async (root, reader) => {
+  await write(root, `rollout-${PARENT_ID}.jsonl`, [
+    meta(PARENT_ID, 'C:\\Projects\\Parent'), turn('C:\\Projects\\Parent', base, 'parent-turn'), event(ONE, base + minute)
+  ].join('\n') + '\n');
+  await write(root, `rollout-${CHILD_ID}.jsonl`, [
+    meta(CHILD_ID, 'C:\\Projects\\Child', base, PARENT_ID), meta(PARENT_ID, 'C:\\Projects\\Parent'),
+    turn('C:\\Projects\\Child', base, 'child-turn'), event(ONE, base + minute), event(TWO, base + 2 * minute, ONE)
+  ].join('\n') + '\n');
+  await reader.scan(base + 10 * minute);
+  assert.deepEqual(tokensOf(reader).map(row => [row[0], row[1]]), [['Child', 220], ['Parent', 110]]);
+  assert.equal(reader.coverage().sessions, 2);
+}));
+
+test('a replayed fork prefix uses parent turn identity despite rewritten timestamps and retains the inherited baseline', async () => withRoot(async (root, reader) => {
+  await write(root, `rollout-${PARENT_ID}.jsonl.zst`, zlib.zstdCompressSync(Buffer.from([
+    meta(PARENT_ID, 'C:\\Projects\\Parent'), turn('C:\\Projects\\Parent', base, 'inherited-turn'),
+    event(ONE, base - 3 * minute), event(TWO, base - 2 * minute, ONE), event(THREE, base - minute, ONE)
+  ].join('\n') + '\n')), base - 20 * 86400000);
+  await write(root, `rollout-${CHILD_ID}.jsonl`, [
+    meta(CHILD_ID, 'C:\\Projects\\Child', base, PARENT_ID), turn('C:\\Projects\\Parent', base, 'inherited-turn'),
+    event(TWO, base, ONE), event(THREE, base, ONE),
+    turn('C:\\Projects\\Child', base, 'new-turn'), event([350, 70, 35, 17, 385], base, [50, 10, 5, 2, 55])
+  ].join('\n') + '\n');
+  await reader.scan(base + 10 * minute);
+  assert.deepEqual(tokensOf(reader, base, base + minute).map(row => [row[0], row[1]]), [['Child', 55]]);
+  assert.equal(reader.events(base - 10 * minute, base + minute).reduce((sum, item) => sum + item.tokens, 0), 385);
+  assert.equal(reader.coverage().files, 2);
+  assert.equal(reader.coverage().skipped, 0);
+}));
+
+test('unrelated lookalike events and fresh fork turns are not removed as copied history', async () => withRoot(async (root, reader) => {
+  for (const [id, name] of [[PARENT_ID, 'Parent'], [CHILD_ID, 'Child'], ['independent', 'Independent']]) {
+    await write(root, `rollout-${id}.jsonl`, [
+      meta(id, `C:\\Projects\\${name}`, base, id === CHILD_ID ? PARENT_ID : undefined),
+      turn(`C:\\Projects\\${name}`, base, `${name}-turn`), event(ONE, base + minute)
+    ].join('\n') + '\n');
+  }
+  await reader.scan(base + 10 * minute);
+  assert.equal(reader.events(base, base + 2 * minute).reduce((sum, item) => sum + item.tokens, 0), 330);
+  assert.equal(reader.byProject(base, base + 2 * minute, roots).length, 3);
+}));
+
+test('a true counter reset can increase the total and repeated counters in its turn add nothing', async () => withRoot(async (root, reader) => {
+  await write(root, 'rising-reset.jsonl', [
+    meta('rising-reset', 'C:\\Projects\\Alpha'), turn('C:\\Projects\\Alpha', base, 'before-reset'), event(ONE, base + minute),
+    turn('C:\\Projects\\Beta', base + 2 * minute, 'after-reset'), event(TWO, base + 2 * minute), event(TWO, base + 3 * minute)
+  ].join('\n') + '\n');
+  await reader.scan(base + 10 * minute);
+  assert.deepEqual(tokensOf(reader).map(row => [row[0], row[1]]), [['Beta', 220], ['Alpha', 110]]);
+}));
+
+test('unchanged counters after a new turn context remain repeats before the next increment', async () => withRoot(async (root, reader) => {
+  await write(root, 'context-repeat.jsonl', [
+    meta('context-repeat', 'C:\\Projects\\Alpha'), turn('C:\\Projects\\Alpha', base, 'first-turn'), event(ONE, base),
+    turn('C:\\Projects\\Beta', base + minute, 'second-turn'), event(ONE, base + minute), event(TWO, base + 2 * minute, ONE)
+  ].join('\n') + '\n');
+  await reader.scan(base + 10 * minute);
+  assert.deepEqual(tokensOf(reader).map(row => [row[0], row[1]]), [['Alpha', 110], ['Beta', 110]]);
+}));
+
+test('a missing inherited baseline is degraded while later observed deltas remain available', async () => withRoot(async (root, reader) => {
+  await write(root, `rollout-${CHILD_ID}.jsonl`, [
+    meta(CHILD_ID, 'C:\\Projects\\Child', base, PARENT_ID), turn('C:\\Projects\\Child', base, 'unknown-prefix'),
+    event(TWO, base, ONE), event(THREE, base + minute, ONE)
+  ].join('\n') + '\n');
+  await reader.scan(base + 10 * minute);
+  assert.deepEqual(tokensOf(reader).map(row => [row[0], row[1]]), [['Child', 110]]);
+  assert.equal(reader.coverage().skipped, 1);
+  assert.equal(reader.coverage().read, 0);
+}));
+
+test('a canonical owning filename wins divergent copies while matching prefixes can extend it', async () => withRoot(async (root, reader) => {
+  await write(root, `rollout-${PARENT_ID}.jsonl`, rollout(PARENT_ID, 'C:\\Projects\\Alpha', [ONE, TWO]), base);
+  await write(root, 'alias.jsonl', rollout(PARENT_ID, 'C:\\Projects\\Beta', [ONE, [900, 40, 20, 10, 920], [1000, 40, 20, 10, 1020]]), base + minute);
+  await reader.scan(base + 10 * minute);
+  assert.deepEqual(tokensOf(reader).map(row => [row[0], row[1]]), [['Alpha', 220]]);
+  assert.equal(reader.coverage().skipped, 1);
+}));
+
+test('a UUID filename with missing owner metadata keeps turn attribution without adopting a foreign owner', async () => withRoot(async (root, reader) => {
+  const owner = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+  await write(root, `rollout-${owner.toUpperCase()}.jsonl`, [
+    meta(PARENT_ID, 'C:\\Projects\\Wrong'), turn('C:\\Projects\\Actual', base, 'actual-turn'), event(ONE, base + minute)
+  ].join('\n') + '\n');
+  await write(root, 'copy.jsonl.zst', zlib.zstdCompressSync(Buffer.from([
+    meta(owner, 'C:\\Projects\\Actual'), turn('C:\\Projects\\Actual', base, 'actual-turn'), event(ONE, base + minute)
+  ].join('\n') + '\n')));
+  await reader.scan(base + 10 * minute);
+  assert.deepEqual(tokensOf(reader).map(row => [row[0], row[1]]), [['Actual', 110]]);
+  assert.equal(reader.coverage().sessions, 1);
+}));
+
+test('a metadata-incomplete canonical copy uses captured same-owner lineage from a matching alias', async () => withRoot(async (root, reader) => {
+  await write(root, `rollout-${PARENT_ID}.jsonl`, [
+    meta(PARENT_ID, 'C:\\Projects\\Parent'), turn('C:\\Projects\\Parent', base - minute, 'shared-turn'), event(TWO, base - minute, ONE)
+  ].join('\n') + '\n');
+  const observations = [turn('C:\\Projects\\Parent', base, 'shared-turn'), event(TWO, base, ONE),
+    turn('C:\\Projects\\Child', base, 'child-turn'), event(THREE, base, ONE)];
+  await write(root, `rollout-${CHILD_ID}.jsonl`, [meta(PARENT_ID, 'C:\\Projects\\Parent'), ...observations].join('\n') + '\n');
+  await write(root, 'alias.jsonl.zst', zlib.zstdCompressSync(Buffer.from([
+    meta(CHILD_ID, 'C:\\Projects\\Child', base, PARENT_ID), ...observations
+  ].join('\n') + '\n')));
+  await reader.scan(base + minute);
+  assert.deepEqual(tokensOf(reader, base, base + minute).map(row => [row[0], row[1]]), [['Child', 110]]);
+  assert.equal(reader.coverage().skipped, 0);
+}));
+
+test('a fresh-looking fork with a missing ancestor is not certified, and cycles terminate with degraded coverage', async () => withRoot(async root => {
+  const child = await write(root, `rollout-${CHILD_ID}.jsonl`, [
+    meta(CHILD_ID, 'C:\\Projects\\Child', base, PARENT_ID), turn('C:\\Projects\\Child', base, 'copied-or-fresh'), event(ONE, base)
+  ].join('\n') + '\n');
+  const missing = new CodexRolloutReader(root);
+  await missing.scan(base + minute);
+  assert.equal(missing.events(base, base + minute).length, 0);
+  assert.equal(missing.issues.unresolvedForks, 1);
+  await assert.rejects(new CodexRolloutReader(root).scan(base + minute, []), /incomplete/);
+  await write(root, `rollout-${PARENT_ID}.jsonl`, [
+    meta(PARENT_ID, 'C:\\Projects\\Parent', base, CHILD_ID), turn('C:\\Projects\\Parent', base, 'parent-turn'), event(ONE, base)
+  ].join('\n') + '\n');
+  const cyclic = new CodexRolloutReader(root);
+  await cyclic.scan(base + minute);
+  assert.equal(cyclic.issues.lineageCycles, 2);
+  assert.equal(cyclic.coverage().skipped, 2);
+  assert.equal((await fs.stat(child)).isFile(), true);
+}));
+
+test('inherited signatures after fresh child usage are degraded and refused by strict audit', async () => withRoot(async (root, reader) => {
+  await write(root, `rollout-${PARENT_ID}.jsonl`, [
+    meta(PARENT_ID, 'C:\\Projects\\Parent'), turn('C:\\Projects\\Parent', base, 'inherited-turn'), event(ONE, base)
+  ].join('\n') + '\n');
+  await write(root, `rollout-${CHILD_ID}.jsonl`, [
+    meta(CHILD_ID, 'C:\\Projects\\Child', base, PARENT_ID), turn('C:\\Projects\\Child', base, 'fresh-turn'), event(TWO, base),
+    turn('C:\\Projects\\Parent', base + minute, 'inherited-turn'), event(ONE, base + minute)
+  ].join('\n') + '\n');
+  await reader.scan(base + 10 * minute);
+  assert.equal(reader.issues.nonPrefixReplays, 1);
+  assert.equal(reader.coverage().skipped, 1);
+  await assert.rejects(new CodexRolloutReader(root).scan(base + 10 * minute, []), /incomplete/);
+}));
+
+test('POSIX root containment keeps case and normalizes dot segments', async () => withRoot(async (root, reader) => {
+  for (const [index, cwd] of ['/projects/Alpha/../Beta', '/projects/beta', '/Projects/Beta', '/projects2/Beta'].entries()) {
+    await write(root, `posix-${index}.jsonl`, [meta(`posix-${index}`, cwd), event(ONE, base)].join('\n') + '\n');
+  }
+  await reader.scan(base + minute);
+  const totals = reader.byProject(base, base + minute, { workspace: '/projects', codexApp: '/home/example/Documents/Codex' });
+  assert.deepEqual(totals.map(item => [item.name, item.tokens]), [[OUTSIDE_LABEL, 220], ['beta', 110], ['Beta', 110]]);
+}));
+
+test('custom absolute Codex home includes an optional archive and rejects drive-relative home overrides', async () => withRoot(async root => {
+  const configured = codexRolloutRoots(root, path.join(root, 'custom-home'));
+  assert.deepEqual(configured, [path.join(root, 'custom-home', 'sessions'), path.join(root, 'custom-home', 'archived_sessions')]);
+  assert.equal(codexSessionsRoot(root, 'C:relative'), path.join(root, '.codex', 'sessions'));
+  await write(configured[0], 'active.jsonl', rollout('active', 'C:\\Projects\\Alpha', [ONE]));
+  const reader = new CodexRolloutReader(configured);
+  await reader.scan(base + minute);
+  assert.equal(reader.coverage().files, 1);
+  await write(configured[1], 'archived.jsonl.zst', zlib.zstdCompressSync(Buffer.from(rollout('archived', 'C:\\Projects\\Beta', [ONE]))));
+  await reader.scan(base + minute);
+  assert.equal(reader.coverage().files, 2);
+  assert.equal(reader.events(base, base + 2 * minute).reduce((sum, item) => sum + item.tokens, 0), 220);
+}));
+
+test('a recent suffix loads its older matching sibling from the archive before computing window deltas', async () => withRoot(async root => {
+  const active = path.join(root, 'sessions'), archived = path.join(root, 'archived_sessions');
+  await write(archived, `rollout-${PARENT_ID}.jsonl.zst`, zlib.zstdCompressSync(Buffer.from([
+    meta(PARENT_ID, 'C:\\Projects\\Alpha'), event(ONE, base + minute), event(TWO, base + 2 * minute, ONE)
+  ].join('\n') + '\n')), base - 20 * 86400000);
+  await write(active, `rollout-${PARENT_ID}.jsonl`, [
+    meta(PARENT_ID, 'C:\\Projects\\Alpha'), event(TWO, base + 2 * minute, ONE), event(THREE, base + 3 * minute, ONE)
+  ].join('\n') + '\n');
+  const reader = new CodexRolloutReader([active, archived]);
+  await reader.scan(base + 10 * minute);
+  assert.deepEqual(tokensOf(reader, base + 2 * minute, base + 3 * minute).map(row => [row[0], row[1]]), [['Alpha', 110]]);
+  assert.equal(reader.coverage().files, 2);
+  assert.equal(reader.coverage().sessions, 1);
+}));
+
+test('audit hashes exact plain and compressed inputs, includes the partial tail, and requires a fresh reader', async () => withRoot(async (root, reader) => {
+  const plain = Buffer.from(rollout('proof-plain', 'C:\\Projects\\Alpha', [ONE]) + event(TWO, base + 2 * minute).slice(0, 60));
+  const compressed = zlib.zstdCompressSync(Buffer.from(rollout('proof-compressed', 'C:\\Projects\\Beta', [THREE]).trimEnd()));
+  await write(root, 'proof.jsonl', plain);
+  await write(root, 'proof.jsonl.zst', compressed);
+  const proof: ProjectInputFile[] = [];
+  await reader.scan(base + 10 * minute, proof);
+  assert.equal(proof.length, 2);
+  for (const [bytes, encoding] of [[plain, 'plain'], [compressed, 'zstd']] as const) {
+    const item = proof.find(item => item.encoding === encoding)!;
+    assert.equal(item.byteLimit, bytes.length);
+    assert.equal(item.sha256, createHash('sha256').update(bytes).digest('hex'));
+    assert.match(item.key, /^[0-9a-f]{64}$/);
+  }
+  assert.deepEqual(tokensOf(reader).map(row => [row[0], row[1]]), [['Beta', 330], ['Alpha', 110]]);
+  await assert.rejects(reader.scan(base + 10 * minute, []), /fresh reader/);
 }));
 
 test('growth is read by offset; replacement, shrink and older mtime are reread; a removed file drops out', async () => withRoot(async (root, reader) => {

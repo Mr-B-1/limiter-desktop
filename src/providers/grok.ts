@@ -84,9 +84,11 @@ export function reloginRequired(stderr: string): boolean | null {
     return typeof flag === 'boolean' ? flag : null;
   } catch { return null; }
 }
-export async function readGrokQuota(root: string, python = findPython()): Promise<GrokRead> {
+export async function readGrokQuota(root: string, python = findPython(), signal?: AbortSignal): Promise<GrokRead> {
+  if (signal?.aborted) return { ok: false, status: 'offline' };
   if (!python) return { ok: false, status: 'setup' };
   try { await access(path.join(root, 'grokcli', 'cli.py')); } catch { return { ok: false, status: 'setup' }; }
+  if (signal?.aborted) return { ok: false, status: 'offline' };
   const home = os.homedir();
   return await new Promise(resolve => {
     // -E and -s keep the user's Python environment and site packages out, -B writes no bytecode into the checkout.
@@ -95,6 +97,9 @@ export async function readGrokQuota(root: string, python = findPython()): Promis
       env: { SystemRoot: process.env.SystemRoot, USERPROFILE: home, HOMEDRIVE: process.env.HOMEDRIVE, HOMEPATH: process.env.HOMEPATH, LOCALAPPDATA: process.env.LOCALAPPDATA,
         APPDATA: process.env.APPDATA, TEMP: process.env.TEMP, TMP: process.env.TMP, PYTHONIOENCODING: 'utf-8', GROKCLI_HOME: path.join(home, '.config', 'grokcli') },
     });
+    const cancel = () => { child.kill(); };
+    signal?.addEventListener('abort', cancel, { once: true });
+    if (signal?.aborted) cancel();
     let output = '';
     let overflow = false;
     let timedOut = false;
@@ -103,9 +108,11 @@ export async function readGrokQuota(root: string, python = findPython()): Promis
     child.stderr.on('data', chunk => { if (errors.length < 16384) errors += chunk.toString('utf8'); });
     const timer = setTimeout(() => { timedOut = true; child.kill(); }, 20000);
     child.stdout.on('data', chunk => { output += chunk.toString('utf8'); if (output.length > 65536) { overflow = true; child.kill(); } });
-    child.on('error', () => { clearTimeout(timer); resolve({ ok: false, status: 'setup' }); });
+    child.on('error', () => { clearTimeout(timer); signal?.removeEventListener('abort', cancel); resolve({ ok: false, status: 'setup' }); });
     child.on('close', code => {
       clearTimeout(timer);
+      signal?.removeEventListener('abort', cancel);
+      if (signal?.aborted) { resolve({ ok: false, status: 'offline' }); return; }
       if (timedOut) { resolve({ ok: false, status: 'timeout' }); return; }
       if (overflow) { resolve({ ok: false, status: 'compatibility' }); return; }
       if (code === 3) { resolve({ ok: false, status: reloginRequired(errors) === false ? 'unauthorized' : 'signed-out' }); return; }
@@ -128,8 +135,9 @@ export class GrokProvider {
   // A dead sign-in, a missing setup or a changed source does not fix itself; scheduled reads stop until the user presses Refresh.
   private held = false;
   private paused = false;
+  private controller: AbortController | null = null;
   // Main passes a transport bound to the user's grokcli folder; without one the row stays in setup.
-  constructor(private readonly changed: () => void, private readonly transport: () => Promise<GrokRead> = async () => ({ ok: false, status: 'setup' }), private readonly now: () => number = () => performance.now()) {}
+  constructor(private readonly changed: () => void, private readonly transport: (signal: AbortSignal) => Promise<GrokRead> = async () => ({ ok: false, status: 'setup' }), private readonly now: () => number = () => performance.now()) {}
   start(): void { this.stopped = false; void this.refresh('scheduled'); this.timer = setInterval(() => { void this.refresh('scheduled'); }, 15 * 60000); }
   state(): GrokState {
     return { status: this.status, snapshot: this.snapshot, stale: !!this.snapshot && (this.status !== 'ready' || this.now() - this.lastReadMono > 20 * 60000), refreshing: !!this.pending };
@@ -146,12 +154,13 @@ export class GrokProvider {
     return this.pending;
   }
   private async read(): Promise<void> {
+    this.controller = new AbortController();
     const scope = this.scope;
     this.nextRead = this.now() + 10000;
     this.status = this.snapshot ? 'ready' : 'loading';
     this.changed();
     try {
-      const result = await this.transport();
+      const result = await this.transport(this.controller.signal);
       if (this.stopped) return;
       if (!result.ok) {
         this.status = result.status;
@@ -169,5 +178,5 @@ export class GrokProvider {
       if (!this.stopped) { this.status = 'compatibility'; this.snapshot = null; this.scope = null; this.held = true; }
     }
   }
-  async stop(): Promise<void> { this.stopped = true; this.scope = null; clearInterval(this.timer); await this.pending; this.snapshot = null; }
+  async stop(): Promise<void> { this.stopped = true; this.scope = null; clearInterval(this.timer); this.controller?.abort(); await this.pending; this.snapshot = null; }
 }

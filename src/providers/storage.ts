@@ -58,6 +58,7 @@ export class StorageProvider {
       local: { ...this.values.local, label: config.localLabel, volume: config.localVolume },
       remote: config.remote ? { ...this.values.remote, label: config.remote.label, volume: '/' } : { status: 'off', reading: null, label: 'Remote', volume: '/' }
     };
+    if (config.remote && config.remote.host !== this.remoteHost) result.remote = { ...result.remote, status: 'waiting', reading: null };
     for (const id of diskIds) {
       const { reading, status } = result[id];
       if (reading && status === 'ready' && this.now() - reading.observedAt >= 2 * STORAGE_INTERVAL_MS)

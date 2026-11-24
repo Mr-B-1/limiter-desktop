@@ -2,7 +2,7 @@ Limiter, quick start
 --------------------
 
 Limiter is a small widget that sits on your Windows desktop. It shows how much is left of your
-Codex, Claude Code and Grok allowances, which of your projects used them this week, and free disk space.
+Codex, Claude Code, Grok and Antigravity allowances, which of your projects used them this week, and free disk space.
 
 What you need
 1. Windows 11. Use the zip that matches your PC: "x64" for most PCs (Intel or AMD), "arm64" for ARM PCs
@@ -11,7 +11,8 @@ What you need
 2. For the Codex row: the Codex CLI installed and signed in (Limiter finds codex.exe; you can also pick it in Settings).
 3. For the Claude Code row: Claude Code used on this PC. Its local logs are read; nothing is sent anywhere.
 4. Optional, for the Grok row: a signed-in grokcli folder and Python on the PATH.
-5. Optional, for a second disk row: an SSH host you already use, set up in your SSH config with a trusted host key.
+5. Optional, for Antigravity rows: Antigravity installed and running on this PC (hidden automatically otherwise).
+6. Optional, for a second disk row: an SSH host you already use, set up in your SSH config with a trusted host key.
 
 Install
 1. Unzip this folder anywhere you like, for example in your Documents folder. Keep every file together.
@@ -27,9 +28,12 @@ Use
 4. Quit from the tray icon menu.
 
 Privacy
-Limiter reads local files on this PC (Claude Code and Codex logs) and the quota that the Codex CLI and grokcli report.
+Limiter reads local files on this PC (Claude Code and Codex logs), the quota that the Codex CLI and grokcli report,
+and Antigravity's local language server on 127.0.0.1 (using the port and per-process request token from
+~/.gemini/antigravity/daemon/hub_*.json; that token is never stored, logged or sent elsewhere, and account profile
+fields in the reply are discarded).
 If you add a remote disk, it runs one read-only disk-space command on that host over your own SSH setup.
-It never reads or stores your sign-in tokens and sends no usage data anywhere.
+It never reads, stores or renews your account sign-in tokens and sends no usage data anywhere.
 
 Uninstall
 1. Quit Limiter from the tray icon, and turn off "Start with Windows" first if you turned it on.

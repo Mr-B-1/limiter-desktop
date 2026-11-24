@@ -6,6 +6,7 @@ import { parseCalibration, type ClaudeCalibration } from '../providers/claude-lo
 import { validHost, validLabel } from '../shared/storage.js';
 
 export interface Bounds { x: number; y: number; width: number; height: number; }
+export interface NativePlacement { bounds: Bounds; native: Bounds; layout: string; }
 export interface RemoteDisk { host: string; label: string; }
 // Version 3 adds the per-user setup (0.7.0). Every new field is optional, so a version 2 file reads with them unset.
 export interface Preferences {
@@ -13,6 +14,8 @@ export interface Preferences {
   pinned: boolean;
   theme: Theme;
   bounds: Bounds | null;
+  // Optional in schema 3: older releases keep using bounds, while current releases retain exact screen pixels.
+  nativePlacement?: NativePlacement;
   codexPath: string | null;
   lastCodexPath: string | null;
   claudeCalibration: ClaudeCalibration | null;
@@ -34,6 +37,15 @@ function folder(item: unknown): string | null {
   if (item === null || item === undefined) return null;
   if (typeof item !== 'string' || item.length > 260 || !path.isAbsolute(item) || /[\u0000-\u001f]/.test(item)) throw new Error('Invalid folder preference');
   return item;
+}
+function nativePlacement(value: unknown, bounds: Bounds | null): NativePlacement | undefined {
+  if (!bounds || !record(value) || !record(value.bounds) || !record(value.native) || typeof value.layout !== 'string' ||
+      value.layout.length === 0 || value.layout.length > 16384) return undefined;
+  const logical = value.bounds, native = value.native;
+  if (!(['x', 'y', 'width', 'height'] as const).every(key => logical[key] === bounds[key] && typeof native[key] === 'number' &&
+      Number.isInteger(native[key]) && Math.abs(native[key] as number) < 100000) ||
+      (native.width as number) <= 0 || (native.width as number) > 16000 || (native.height as number) <= 0 || (native.height as number) > 16000) return undefined;
+  return { bounds: { ...bounds }, native: { x: native.x as number, y: native.y as number, width: native.width as number, height: native.height as number }, layout: value.layout };
 }
 export function parsePreferences(value: unknown): Preferences {
   if (!record(value) || ![1, 2, 3].includes(Number(value.schemaVersion)) || typeof value.pinned !== 'boolean' ||
@@ -60,7 +72,9 @@ export function parsePreferences(value: unknown): Preferences {
     remoteDisk = { host: remote.host, label: remote.label.trim() };
   }
   if (value.localDiskLabel !== null && value.localDiskLabel !== undefined && !validLabel(value.localDiskLabel)) throw new Error('Invalid disk label preference');
-  return { schemaVersion: 3, pinned: false, theme: value.theme as Theme, bounds, codexPath: nativePath(value.codexPath), lastCodexPath: nativePath(value.lastCodexPath),
+  // Damaged or outdated placement metadata only drops the pixel override, never unrelated preferences.
+  const placement = nativePlacement(value.nativePlacement, bounds);
+  return { schemaVersion: 3, pinned: false, theme: value.theme as Theme, bounds, ...(placement ? { nativePlacement: placement } : {}), codexPath: nativePath(value.codexPath), lastCodexPath: nativePath(value.lastCodexPath),
     claudeCalibration: parseCalibration(value.claudeCalibration), projectsRoot: folder(value.projectsRoot), grokcliRoot: folder(value.grokcliRoot),
     localDiskLabel: typeof value.localDiskLabel === 'string' ? value.localDiskLabel.trim() : null, remoteDisk };
 }

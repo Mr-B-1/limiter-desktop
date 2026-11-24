@@ -1,12 +1,12 @@
 :root {
   color-scheme: light dark;
   --bg:#151816; --panel:#1e221e; --line:#30372f; --ink:#eef1e8; --muted:#a1aa9d;
-  --accent:#c0dc82; --claude:#e5af8e; --grok:#d7c4a3; --warn:#e7bf71; --bad:#ef9a89;
+  --accent:#c0dc82; --claude:#e5af8e; --grok:#d7c4a3; --antigravity:#9fc3e8; --warn:#e7bf71; --bad:#ef9a89;
   font-family:"Bahnschrift","Segoe UI Variable Text",sans-serif; font-size:11px;
 }
-@media(prefers-color-scheme:light) { :root { --bg:#f4f3ec; --panel:#e8eadf; --line:#d5dccb; --ink:#242b22; --muted:#626d5b; --accent:#497528; --claude:#995b3a; --grok:#7a6240; --warn:#856012; --bad:#a13b26; } }
-:root[data-theme="dark"] { color-scheme:dark; --bg:#151816; --panel:#1e221e; --line:#30372f; --ink:#eef1e8; --muted:#a1aa9d; --accent:#c0dc82; --claude:#e5af8e; --grok:#d7c4a3; --warn:#e7bf71; --bad:#ef9a89; }
-:root[data-theme="light"] { color-scheme:light; --bg:#f4f3ec; --panel:#e8eadf; --line:#d5dccb; --ink:#242b22; --muted:#626d5b; --accent:#497528; --claude:#995b3a; --grok:#7a6240; --warn:#856012; --bad:#a13b26; }
+@media(prefers-color-scheme:light) { :root { --bg:#f4f3ec; --panel:#e8eadf; --line:#d5dccb; --ink:#242b22; --muted:#626d5b; --accent:#497528; --claude:#995b3a; --grok:#7a6240; --antigravity:#2f5f8f; --warn:#856012; --bad:#a13b26; } }
+:root[data-theme="dark"] { color-scheme:dark; --bg:#151816; --panel:#1e221e; --line:#30372f; --ink:#eef1e8; --muted:#a1aa9d; --accent:#c0dc82; --claude:#e5af8e; --grok:#d7c4a3; --antigravity:#9fc3e8; --warn:#e7bf71; --bad:#ef9a89; }
+:root[data-theme="light"] { color-scheme:light; --bg:#f4f3ec; --panel:#e8eadf; --line:#d5dccb; --ink:#242b22; --muted:#626d5b; --accent:#497528; --claude:#995b3a; --grok:#7a6240; --antigravity:#2f5f8f; --warn:#856012; --bad:#a13b26; }
 * { box-sizing:border-box; }
 body { margin:0; color:var(--ink); background:var(--bg); user-select:none; overflow:hidden; }
 .widget { height:100vh; border:1px solid var(--line); display:flex; flex-direction:column; }
@@ -28,7 +28,7 @@ main { margin:0 5px; padding:0 7px; flex:1; min-height:0; display:flex; flex-dir
 .name { display:flex; align-items:center; gap:6px; white-space:nowrap; font-weight:500; font-size:12px; }
 .name small { color:var(--muted); font-size:9px; font-weight:400; }
 .dot { width:6px; height:6px; border-radius:50%; background:var(--accent); flex:none; }
-.dot.claude { background:var(--claude); }.dot.grok { background:var(--grok); }
+.dot.claude { background:var(--claude); }.dot.grok { background:var(--grok); }.dot.antigravity { background:var(--antigravity); }
 strong { font-weight:500; }
 .card strong { font-size:21px; letter-spacing:-.6px; font-variant-numeric:tabular-nums; line-height:23px; white-space:nowrap; }
 .dot.disk { background:var(--muted); }
@@ -37,6 +37,10 @@ strong { font-weight:500; }
 .meter>span { display:block; height:100%; width:0; background:var(--accent); }
 #claude-meter>span { background:var(--claude); }
 #grok-meter>span { background:var(--grok); }
+.antigravity-meter>span { background:var(--antigravity); }
+/* An Antigravity reading kept after the app closed is greyed; long pool names truncate before the percentage. */
+.card[data-stale="true"] strong, .card[data-stale="true"] .meter { opacity:.5; }
+.antigravity-card .name { min-width:0; }.antigravity-card .name small { overflow:hidden; text-overflow:ellipsis; }
 .meter[data-tone="warn"]>span, #claude-meter[data-tone="warn"]>span { background:var(--warn); }.meter[data-tone="bad"]>span, #claude-meter[data-tone="bad"]>span { background:var(--bad); }
 .meta { color:var(--muted); font-size:9px; line-height:12px; white-space:nowrap; }
 .meta>span:first-child { min-width:0; overflow:hidden; text-overflow:ellipsis; }

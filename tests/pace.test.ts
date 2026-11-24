@@ -37,3 +37,17 @@ test('forecast projects time to empty from the last hour and knows when the rese
   forecast.observe('claude-5h', null, null);
   assert.equal(forecast.project('claude-5h', reset + 18000), null);
 });
+
+test('missing quota clears a real trend only for its own key', () => {
+  let clock = now;
+  const forecast = new Forecast(() => clock), reset = Math.floor((now + 7200000) / 1000);
+  for (const key of ['codex', 'grok']) forecast.observe(key, 10, reset);
+  clock += 600000;
+  for (const key of ['codex', 'grok']) forecast.observe(key, 20, reset);
+  assert.equal(forecast.project('codex', reset)?.ratePerHour, 60);
+  forecast.observe('codex', null, null);
+  assert.equal(forecast.project('codex', reset), null);
+  clock += 60000; forecast.observe('codex', 21, reset);
+  assert.equal(forecast.project('codex', reset), null, 'one restored sample must start a new trend');
+  assert.equal(forecast.project('grok', reset)?.ratePerHour, 60);
+});

@@ -25,19 +25,25 @@ export function defaultRoots(home: string, workspace: string | null = null): Pro
 function normalize(value: string): string {
   return value.replaceAll('/', '\\').replace(/[\\]+$/, '');
 }
+// Windows drive and UNC paths share a case-insensitive identity; display names keep their original spelling.
+export function projectKey(cwd: unknown, name: string): string {
+  return typeof cwd === 'string' && /^(?:[a-z]:[\\/]|[\\/]{2})/i.test(cwd) ? name.toLowerCase() : name;
+}
 // With a projects folder, a project is its first-level folder and the two outside rows keep totals honest.
 // Without one, each session counts under its own folder name, so a fresh install ranks something useful.
 export function projectLabel(cwd: unknown, roots: ProjectRoots): string {
   if (typeof cwd !== 'string' || !cwd) return OUTSIDE_LABEL;
   const folder = normalize(cwd);
-  const lower = folder.toLowerCase();
+  const windows = /^(?:[a-z]:[\\/]|[\\/]{2})/i.test(cwd);
+  const comparable = (value: string) => windows ? value.toLowerCase() : value;
+  const key = comparable(folder);
   if (roots.workspace) {
-    const workspace = normalize(roots.workspace).toLowerCase();
-    if (lower === workspace) return WORKSPACE_ROOT_LABEL;
-    if (lower.startsWith(workspace + '\\')) return folder.slice(workspace.length + 1).split('\\')[0] || WORKSPACE_ROOT_LABEL;
+    const workspace = comparable(normalize(roots.workspace));
+    if (key === workspace) return WORKSPACE_ROOT_LABEL;
+    if (key.startsWith(workspace + '\\')) return folder.slice(workspace.length + 1).split('\\')[0] || WORKSPACE_ROOT_LABEL;
   }
-  const codexApp = normalize(roots.codexApp).toLowerCase();
-  if (lower === codexApp || lower.startsWith(codexApp + '\\')) return CODEX_APP_LABEL;
+  const codexApp = comparable(normalize(roots.codexApp));
+  if (key === codexApp || key.startsWith(codexApp + '\\')) return CODEX_APP_LABEL;
   if (roots.workspace) return OUTSIDE_LABEL;
   return folder.split('\\').filter(Boolean).pop() || OUTSIDE_LABEL;
 }
