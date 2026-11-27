@@ -1,6 +1,6 @@
 {
   "name": "limiter",
-  "version": "0.8.2",
+  "version": "0.8.3",
   "private": true,
   "type": "module",
   "description": "A Windows desktop widget showing remaining Codex, Claude Code, Grok and Antigravity capacity, which projects used it, and free disk space.",

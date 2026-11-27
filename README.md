@@ -8,10 +8,10 @@ Get the zip from the [latest release](https://github.com/Mr-B-1/limiter-desktop/
 
 | Your PC | Download |
 |---|---|
-| Most Windows 11 PCs (Intel or AMD) | `Limiter-<version>-windows-x64.zip` |
-| ARM PCs (for example Snapdragon) | `Limiter-<version>-windows-arm64.zip` |
+| Standard Windows 10 or 11 PCs (64-bit Intel or AMD) | `Limiter-<version>-windows-x64.zip` |
+| ARM Windows PCs (for example Snapdragon) | `Limiter-<version>-windows-arm64.zip` |
 
-To check which one you have, open **Settings**, **System**, **About**, and read **System type**. The x64 zip does not run on an ARM PC; it says so and points you to the ARM64 zip. Each release has a `SHA256SUMS.txt` to check the download.
+To check which one you have, open **Settings**, **System**, **About**, and read **System type** (`x64-based processor` uses `x64`; `ARM-based processor` uses `arm64`). If you accidentally open the `x64` zip on an ARM PC, Limiter tells you and points to the `arm64` zip. Each release includes a `SHA256SUMS.txt` file to verify the download.
 
 The app is not code-signed, so Windows SmartScreen shows "Windows protected your PC" the first time. Select **More info**, then **Run anyway**.
 
@@ -43,7 +43,7 @@ Limiter reads local files on your PC and the quota reported by the Codex CLI, gr
 
 ## Build from source
 
-Requires Windows 11 (x64 or ARM64) and Node 24. Each command targets your own PC type unless you add `--arch=x64` or `--arch=arm64`. A GitHub Actions workflow in `.github/workflows/windows.yml` builds, tests and smoke-tests the x64 build on a GitHub x64 runner.
+Requires Windows 10 or 11 (x64 or ARM64) and Node 24. Each command targets your own PC's processor architecture automatically unless you pass `--arch=x64` or `--arch=arm64`. A GitHub Actions workflow in `.github/workflows/windows.yml` builds, unit-tests, smoke-tests, and zips both the `x64` and `arm64` packages on GitHub Windows runners.
 
 ```bash
 node tools/build.mjs setup

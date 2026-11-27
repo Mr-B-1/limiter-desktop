@@ -1,7 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
+import { promises as fs } from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { CodexProvider, type SourceConnection } from '../src/providers/codex.js';
+import { nativeExecutable } from '../src/providers/codex-discovery.js';
 import type { RpcClient } from '../src/providers/protocol.js';
 class FakeClient extends EventEmitter {
   alive = true; reads = 0; identity = 'a@example.invalid'; changeDuringRead = false; notifyDuringRead = false;
@@ -67,4 +71,31 @@ test('stopping during connect closes the late child and rejects the pending read
   const stop = provider.stop();
   resolve(connection(client));
   await stop; await check; assert.equal(client.alive, false);
+});
+test('nativeExecutable accepts x64 codex.exe on all Windows PCs and ARM64 codex.exe only on ARM64 PCs', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'limiter-pe-'));
+  const writePe = async (folder: string, name: string, machine: number) => {
+    const sub = path.join(dir, folder);
+    await fs.mkdir(sub, { recursive: true });
+    const file = path.join(sub, name);
+    const buf = Buffer.alloc(128);
+    buf.write('MZ', 0, 'ascii');
+    buf.writeUInt32LE(64, 60);
+    buf.writeUInt32LE(0x4550, 64);
+    buf.writeUInt16LE(machine, 68);
+    await fs.writeFile(file, buf);
+    return file;
+  };
+  try {
+    const x64Exe = await writePe('x64', 'codex.exe', 0x8664);
+    const armExe = await writePe('arm', 'codex.exe', 0xaa64);
+    const wrongName = await writePe('other', 'other.exe', 0x8664);
+    assert.equal(await nativeExecutable(x64Exe, 'x64'), true);
+    assert.equal(await nativeExecutable(x64Exe, 'arm64'), true);
+    assert.equal(await nativeExecutable(armExe, 'arm64'), true);
+    assert.equal(await nativeExecutable(armExe, 'x64'), false);
+    assert.equal(await nativeExecutable(wrongName, 'x64'), false);
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+  }
 });

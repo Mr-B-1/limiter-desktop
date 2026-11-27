@@ -24,14 +24,19 @@ export async function candidatePaths(explicit?: string, previous?: string): Prom
       for (const candidate of candidates.sort((a, b) => b.time - a.time || a.filename.localeCompare(b.filename))) result.push(candidate.filename);
     } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw new SourceError('unavailable'); }
   }
-  const target = process.arch === 'arm64' ? 'windows-aarch64' : 'windows-x86_64';
-  const extensionRoot = path.join(os.homedir(), '.vscode', 'extensions');
-  try {
-    const extensions = (await fs.readdir(extensionRoot)).filter(name => name.startsWith('openai.chatgpt-')).sort((a, b) => b.localeCompare(a, undefined, { numeric: true }));
-    for (const name of extensions) result.push(path.join(extensionRoot, name, 'bin', target, 'codex.exe'));
-  } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw new SourceError('unavailable'); }
+  const targets = process.arch === 'arm64' ? ['windows-aarch64', 'windows-x86_64'] : ['windows-x86_64'];
+  for (const editor of ['.vscode', '.cursor', '.windsurf', '.antigravity']) {
+    const extensionRoot = path.join(os.homedir(), editor, 'extensions');
+    try {
+      const extensions = (await fs.readdir(extensionRoot)).filter(name => name.startsWith('openai.chatgpt-')).sort((a, b) => b.localeCompare(a, undefined, { numeric: true }));
+      for (const target of targets) for (const name of extensions) result.push(path.join(extensionRoot, name, 'bin', target, 'codex.exe'));
+    } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw new SourceError('unavailable'); }
+  }
   const roaming = process.env.APPDATA;
-  if (roaming) result.push(path.join(roaming, 'npm', 'node_modules', '@openai', 'codex', 'vendor', process.arch === 'arm64' ? 'aarch64-pc-windows-msvc' : 'x86_64-pc-windows-msvc', 'codex', 'codex.exe'));
+  if (roaming) {
+    const vendors = process.arch === 'arm64' ? ['aarch64-pc-windows-msvc', 'x86_64-pc-windows-msvc'] : ['x86_64-pc-windows-msvc'];
+    for (const vendor of vendors) result.push(path.join(roaming, 'npm', 'node_modules', '@openai', 'codex', 'vendor', vendor, 'codex', 'codex.exe'));
+  }
   return [...new Set(result.filter(value => path.isAbsolute(value) && path.extname(value).toLowerCase() === '.exe'))];
 }
 export async function nativeExecutable(filename: string, architecture = process.arch): Promise<boolean> {
@@ -46,7 +51,9 @@ export async function nativeExecutable(filename: string, architecture = process.
     if (offset > 1024 * 1024) return false;
     const pe = Buffer.alloc(6);
     await handle.read(pe, 0, 6, offset);
-    return pe.readUInt32LE(0) === 0x4550 && pe.readUInt16LE(4) === (architecture === 'arm64' ? 0xaa64 : 0x8664);
+    const machine = pe.readUInt16LE(4);
+    // x64 Windows runs only x64 (0x8664); ARM64 Windows runs native ARM64 (0xaa64) and x64 binaries under Windows emulation.
+    return pe.readUInt32LE(0) === 0x4550 && (machine === 0x8664 || (architecture === 'arm64' && machine === 0xaa64));
   } catch { return false; }
   finally { await handle?.close(); }
 }

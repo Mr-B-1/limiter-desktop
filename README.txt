@@ -5,8 +5,9 @@ Limiter is a small widget that sits on your Windows desktop. It shows how much i
 Codex, Claude Code, Grok and Antigravity allowances, which of your projects used them this week, and free disk space.
 
 What you need
-1. Windows 11. Use the zip that matches your PC: "x64" for most PCs (Intel or AMD), "arm64" for ARM PCs
-   (for example Snapdragon). To check, open Settings, System, About, and read "System type".
+1. Windows 10 or 11 (64-bit). Download the zip that matches your PC:
+   - "x64" for standard Windows PCs (Intel or AMD, "x64-based processor" in Settings > System > About)
+   - "arm64" for ARM Windows PCs (for example Snapdragon, "ARM-based processor")
    The x64 zip does not start on an ARM PC; it shows where to download the ARM64 zip instead.
 2. For the Codex tile: the Codex CLI installed and signed in (Limiter finds codex.exe; you can also pick it in Settings).
 3. For the Claude Code tile: Claude Code used on this PC. Its local logs are read; nothing is sent anywhere.
