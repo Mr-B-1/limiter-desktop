@@ -194,11 +194,11 @@ test('the production Grok factory forwards its cancellation signal to the quota 
   await read(controller.signal); assert.equal(forwarded, controller.signal);
 });
 
-test('Antigravity rows: hidden without an install, one card per pool, stale reading greyed, and a passed reset asks to open the app', () => {
+test('Antigravity rows: hidden without an install, one card per group with weekly outer and 5-hour inner rings, stale reading greyed, and a passed reset asks to open the app', () => {
   // A small stand-in for the DOM: nodes register their ids once they are inserted before the disk row.
   const byId = new Map<string, FakeNode>();
   class FakeNode {
-    id = ''; className = ''; hidden = false; textContent = ''; dataset: Record<string, string> = {}; style: Record<string, string> = {};
+    id = ''; className = ''; hidden = false; textContent = ''; title = ''; dataset: Record<string, string> = {}; style: Record<string, string> = {};
     attributes = new Map<string, string>(); children: (FakeNode | string)[] = [];
     setAttribute(key: string, value: string) { this.attributes.set(key, value); }
     removeAttribute(key: string) { this.attributes.delete(key); }
@@ -207,38 +207,82 @@ test('Antigravity rows: hidden without an install, one card per pool, stale read
     before(node: FakeNode) { const add = (item: FakeNode | string) => { if (typeof item === 'string') return; if (item.id) byId.set(item.id, item); item.children.forEach(add); }; add(node); }
   }
   byId.set('local-card', new FakeNode());
-  const document = { createElement: () => new FakeNode(), getElementById: (id: string) => byId.get(id) ?? null };
+  const document = { createElement: () => new FakeNode(), createElementNS: (_ns: string) => new FakeNode(), getElementById: (id: string) => byId.get(id) ?? null };
   const element = (id: string) => { const found = byId.get(id); assert.ok(found, id); return found; };
   const file = 'src/renderer/widget.ts';
-  const render = evaluate<(state: unknown) => void>(`${constant(file, 'antigravityLabels')}
+  const render = evaluate<(state: unknown) => void>(`${constant(file, 'SVG_NS')}
+${constant(file, 'RING_CIRCUMFERENCE')}
+${constant(file, 'INNER_RADIUS')}
+${constant(file, 'INNER_CIRCUMFERENCE')}
+${constant(file, 'antigravityLabels')}
+${constant(file, 'ringPercent')}
 ${constant(file, 'percent')}
+${constant(file, 'bucketPassed')}
 ${renderer('meter')}
+${renderer('innerMeter')}
 ${renderer('antigravityCard')}
 ${renderer('renderAntigravity')}
 globalThis.testApi=renderAntigravity;`,
     { document, element, countdown, ageLabel, openPanel: () => {}, Date, Math, String });
   const soon = Math.floor(Date.now() / 1000) + 2 * 3600 + 30;
-  const pools = [{ name: 'Gemini', models: ['a', 'b', 'c', 'd', 'e', 'f'], remainingPercent: 86.2, resetsAt: soon }, { name: 'Claude, GPT', models: ['g', 'h', 'i'], remainingPercent: 100, resetsAt: soon }];
+  const week = Math.floor(Date.now() / 1000) + 6 * 86400;
+  const pools = [
+    { name: 'Gemini', models: ['a', 'b', 'c', 'd', 'e', 'f'], weekly: { remainingPercent: 86.2, resetsAt: week }, fiveHour: { remainingPercent: 66, resetsAt: soon } },
+    { name: 'Claude, GPT', models: ['g', 'h', 'i'], weekly: { remainingPercent: 100, resetsAt: week }, fiveHour: { remainingPercent: 83, resetsAt: soon } }];
   const state = (status: string, snapshot: unknown, stale = false) => ({ status, snapshot, stale, refreshing: false });
   render(state('absent', null)); render(state('loading', null));
   assert.equal(byId.has('ag-0-card'), false);
-  render(state('ready', { observedAt: Date.now(), plan: 'Pro', pools }));
+  render(state('ready', { observedAt: Date.now(), pools }));
   assert.deepEqual(['ag-0', 'ag-1'].map(id => [element(id + '-pool').textContent, element(id + '-percent').textContent, element(id + '-meta').textContent, element(id + '-card').hidden]),
-    [['Gemini', '86.2% left', 'Pro plan · 6 models', false], ['Claude, GPT', '100% left', 'Pro plan · 3 models', false]]);
-  assert.match(element('ag-0-reset').textContent, /^2h \d+m$/);
+    [['Gemini', '86%', '5h 66%', false], ['Claude, GPT', '100%', '5h 83%', false]]);
   assert.equal(element('ag-0-meter').attributes.get('aria-valuenow'), '86.2');
-  render(state('closed', { observedAt: Date.now() - 12 * 60000, plan: 'Pro', pools }, true));
+  assert.equal(element('ag-0-fill').style.opacity, '1');
+  assert.equal(element('ag-0-inner').style.opacity, '1');
+  // The inner arc is drawn on its own, shorter circumference: 66% of 2·π·14.5.
+  assert.equal(element('ag-0-inner').attributes.get('stroke-dasharray'), (2 * Math.PI * 14.5 * 0.66).toFixed(2) + ' ' + (2 * Math.PI * 14.5).toFixed(2));
+  assert.equal(element('ag-0-card').title, 'Antigravity Gemini: weekly 86.2% left, 5-hour 66% left. Open details.');
+  // A low 5-hour limit warns on the inner ring only.
+  render(state('ready', { observedAt: Date.now(), pools: [{ ...pools[0], fiveHour: { remainingPercent: 15, resetsAt: soon } }] }));
+  assert.deepEqual([element('ag-0-inner').attributes.get('data-tone'), element('ag-0-meter').dataset.tone, element('ag-1-card').hidden], ['warn', 'good', true]);
+  render(state('closed', { observedAt: Date.now() - 12 * 60000, pools }, true));
   assert.equal(element('ag-0-card').dataset.stale, 'true');
-  assert.equal(element('ag-0-meta').textContent, 'Stale · Read 12m ago');
-  render(state('closed', { observedAt: Date.now() - 6 * 3600000, plan: 'Pro', pools: [{ ...pools[0], resetsAt: soon - 3 * 3600 }] }, true));
-  assert.deepEqual([element('ag-0-percent').textContent, element('ag-0-meta').textContent, element('ag-0-card').dataset.stale, element('ag-1-card').hidden], ['··', 'Open Antigravity to refresh', 'false', true]);
+  assert.equal(element('ag-0-meta').textContent, 'Stale · 12m ago');
+  // A passed 5-hour reset empties the inner ring and asks for the app; the weekly ring keeps its reading.
+  render(state('closed', { observedAt: Date.now() - 6 * 3600000, pools: [{ ...pools[0], fiveHour: { remainingPercent: 66, resetsAt: soon - 3 * 3600 } }] }, true));
+  assert.deepEqual([element('ag-0-percent').textContent, element('ag-0-meta').textContent, element('ag-0-card').dataset.stale, element('ag-0-inner').style.opacity, element('ag-1-card').hidden],
+    ['86%', 'Open Antigravity', 'false', '0', true]);
   render(state('signed-out', null));
   assert.deepEqual([element('ag-0-meta').textContent, element('ag-0-percent').textContent], ['Sign in to Antigravity', '··']);
-  render(state('ready', { observedAt: Date.now(), plan: 'Pro', pools: [{ name: 'Gemini', models: ['a'], remainingPercent: null, resetsAt: soon }] }));
-  assert.deepEqual([element('ag-0-percent').textContent, element('ag-0-meta').textContent, element('ag-0-meter').attributes.get('aria-valuenow')], ['··', 'Percentage not reported', undefined]);
-  assert.match(element('ag-0-reset').textContent, /^2h \d+m$/);
-  render(state('ready', { observedAt: Date.now(), plan: 'Pro', pools: [{ name: 'Gemini', models: ['a'], remainingPercent: 0, resetsAt: soon }] }));
-  assert.deepEqual([element('ag-0-percent').textContent, element('ag-0-meter').attributes.get('aria-valuenow')], ['0% left', '0']);
+  render(state('ready', { observedAt: Date.now(), pools: [{ name: 'Gemini', models: ['a'], weekly: { remainingPercent: null, resetsAt: week }, fiveHour: null }] }));
+  assert.deepEqual([element('ag-0-percent').textContent, element('ag-0-meta').textContent, element('ag-0-meter').attributes.get('aria-valuenow'), element('ag-0-fill').style.opacity, element('ag-0-inner').style.opacity],
+    ['··', '5h ··', undefined, '0', '0']);
+  assert.equal(element('ag-0-card').title.includes('weekly unknown, 5-hour unknown'), true);
+  render(state('ready', { observedAt: Date.now(), pools: [{ name: 'Gemini', models: ['a'], weekly: { remainingPercent: 0, resetsAt: week }, fiveHour: { remainingPercent: 0, resetsAt: soon } }] }));
+  assert.deepEqual([element('ag-0-percent').textContent, element('ag-0-meter').attributes.get('aria-valuenow'), element('ag-0-fill').style.opacity, element('ag-0-inner').attributes.get('data-tone')], ['0%', '0', '0', 'bad']);
   render(state('absent', null));
   assert.equal(element('ag-0-card').hidden, true);
+});
+
+test('ring meter positions and toggles the SVG pace tick', () => {
+  const nodes = new Map<string, { dataset: Record<string, string>; style: Record<string, string>; attributes: Map<string, string>; setAttribute: (k: string, v: string) => void; removeAttribute: (k: string) => void; toggleAttribute: (k: string, on: boolean) => void }>();
+  for (const id of ['meter', 'fill', 'codex-pace']) {
+    const attributes = new Map<string, string>();
+    // Like a real SVG element, the fake has no hidden property: only the attribute can hide the tick.
+    nodes.set(id, { dataset: {}, style: {}, attributes, setAttribute: (k, v) => attributes.set(k, v), removeAttribute: k => attributes.delete(k), toggleAttribute: (k, on) => { if (on) attributes.set(k, ''); else attributes.delete(k); } });
+  }
+  nodes.get('codex-pace')!.attributes.set('hidden', '');
+  const element = (id: string) => nodes.get(id)!;
+  const file = 'src/renderer/widget.ts';
+  const meter = evaluate<(id: string, fill: string, left: number | null, pace?: { elapsedPercent: number } | null, marker?: string | null) => void>(
+    `${constant(file, 'RING_CIRCUMFERENCE')}\n${renderer('meter')}\nglobalThis.testApi=meter;`,
+    { element, Math, String }
+  );
+  meter('meter', 'fill', 62, { elapsedPercent: 25 }, 'codex-pace');
+  assert.equal(nodes.get('codex-pace')!.attributes.has('hidden'), false);
+  assert.equal(nodes.get('codex-pace')!.attributes.get('x1'), '23.00');
+  assert.equal(nodes.get('codex-pace')!.attributes.get('y1'), '7.00');
+  assert.equal(nodes.get('codex-pace')!.attributes.get('x2'), '23.00');
+  assert.equal(nodes.get('codex-pace')!.attributes.get('y2'), '-1.00');
+  meter('meter', 'fill', 62, null, 'codex-pace');
+  assert.equal(nodes.get('codex-pace')!.attributes.has('hidden'), true);
 });

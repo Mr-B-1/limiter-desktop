@@ -3,11 +3,13 @@ import os from 'node:os';
 import path from 'node:path';
 import { record } from './protocol.js';
 
-// Antigravity's own language server reports the plan's per-model quota on a loopback port. Its hub file names the port and a
-// per-process request token; that token is only sent back to the same local server and never stored, logged or shown.
-// The reply also carries account fields (email, name, picture); parseAntigravity keeps only the plan name, model labels and quota.
-export interface AntigravityPool { name: string; models: string[]; remainingPercent: number | null; resetsAt: number | null; }
-export interface AntigravitySnapshot { observedAt: number; plan: string | null; pools: AntigravityPool[]; }
+// Antigravity's own language server reports the plan's quota on a loopback port. Its hub file names the port and a per-process
+// request token; that token is only sent back to the same local server and never stored, logged or shown.
+// RetrieveUserQuotaSummary is the call behind Antigravity's own quota page: each model group has a weekly and a 5-hour bucket.
+// GetUserStatus (used through 0.8.1) carried only the 5-hour fraction per model, plus account fields that Limiter never needs.
+export interface AntigravityBucket { remainingPercent: number | null; resetsAt: number | null; }
+export interface AntigravityPool { name: string; models: string[]; weekly: AntigravityBucket | null; fiveHour: AntigravityBucket | null; }
+export interface AntigravitySnapshot { observedAt: number; pools: AntigravityPool[]; }
 export interface AntigravityState {
   status: 'absent' | 'closed' | 'loading' | 'ready' | 'signed-out' | 'timeout' | 'compatibility';
   snapshot: AntigravitySnapshot | null;
@@ -17,49 +19,43 @@ export interface AntigravityState {
 export type AntigravityRead = { ok: true; body: unknown } | { ok: false; status: AntigravityState['status'] };
 
 export const ANTIGRAVITY_DAEMON = path.join(os.homedir(), '.gemini', 'antigravity', 'daemon');
-const METHOD = '/exa.language_server_pb.LanguageServerService/GetUserStatus';
-const FAMILY_NAMES: Record<string, string> = { gpt: 'GPT' };
+const METHOD = '/exa.language_server_pb.LanguageServerService/RetrieveUserQuotaSummary';
 
-// The family comes from the model id's first segment (gemini-4-neon-high is Gemini), because labels such as "Orchestrator (Neon)" hide it.
-function family(modelId: unknown, label: string): string {
-  const head = (typeof modelId === 'string' && modelId ? modelId : label).split(/[-_ ]/)[0].toLowerCase();
-  return FAMILY_NAMES[head] || head.charAt(0).toUpperCase() + head.slice(1);
+function bucket(value: Record<string, unknown>): AntigravityBucket {
+  // Keep an omitted remainingFraction as null (unknown) rather than substituting 0 (guardrails rule 6).
+  const fraction = value.remainingFraction;
+  let remainingPercent: number | null = null;
+  if (fraction !== undefined && fraction !== null) {
+    if (typeof fraction !== 'number' || !Number.isFinite(fraction) || fraction < 0 || fraction > 1) throw new Error('schema');
+    remainingPercent = Math.round(fraction * 1000) / 10;
+  }
+  let resetsAt: number | null = null;
+  const reset = value.resetTime;
+  if (typeof reset === 'string' && reset) {
+    const parsed = Date.parse(reset);
+    if (!Number.isFinite(parsed)) throw new Error('schema');
+    resetsAt = Math.floor(parsed / 1000);
+  } else if (reset !== undefined && reset !== null) throw new Error('schema');
+  return { remainingPercent, resetsAt };
 }
 export function parseAntigravity(body: unknown, now = Date.now()): AntigravitySnapshot {
-  if (!record(body) || !record(body.userStatus)) throw new Error('schema');
-  const status = body.userStatus;
-  const planInfo = record(status.planStatus) && record(status.planStatus.planInfo) ? status.planStatus.planInfo : null;
-  const plan = planInfo && typeof planInfo.planName === 'string' && planInfo.planName.length <= 40 ? planInfo.planName : null;
-  const configs = record(status.cascadeModelConfigData) ? status.cascadeModelConfigData.clientModelConfigs : undefined;
-  if (!Array.isArray(configs) || configs.length > 200) throw new Error('schema');
-  // Models that share one remaining fraction and one reset minute draw on one pool, so they show as one row.
-  const pools = new Map<string, AntigravityPool & { families: Set<string> }>();
-  for (const config of configs) {
-    if (!record(config)) throw new Error('schema');
-    if (config.quotaInfo === undefined || config.quotaInfo === null) continue;
-    if (!record(config.quotaInfo) || typeof config.label !== 'string' || config.label.length < 1 || config.label.length > 80) throw new Error('schema');
-    // Keep an omitted remainingFraction as null (unknown) rather than substituting 0 (guardrails rule 6).
-    const rawFraction = config.quotaInfo.remainingFraction;
-    let remainingPercent: number | null = null;
-    if (rawFraction !== undefined && rawFraction !== null) {
-      if (typeof rawFraction !== 'number' || !Number.isFinite(rawFraction) || rawFraction < 0 || rawFraction > 1) throw new Error('schema');
-      remainingPercent = Math.round(rawFraction * 1000) / 10;
+  if (!record(body) || !record(body.response) || !Array.isArray(body.response.groups) || body.response.groups.length > 20) throw new Error('schema');
+  const pools = body.response.groups.map((group: unknown): AntigravityPool => {
+    if (!record(group) || typeof group.displayName !== 'string' || group.displayName.length < 1 || group.displayName.length > 80 ||
+        !Array.isArray(group.buckets) || group.buckets.length > 10) throw new Error('schema');
+    // "Claude and GPT models" shows as "Claude, GPT" so the name fits under a ring.
+    const name = group.displayName.replace(/\s+models?$/i, '').replace(/\s+and\s+/gi, ', ');
+    const listed = typeof group.description === 'string' ? /:\s*(.+)$/.exec(group.description) : null;
+    const models = listed ? listed[1].split(',').map(model => model.trim()).filter(model => model && model.length <= 80).slice(0, 50) : [];
+    const pool: AntigravityPool = { name, models, weekly: null, fiveHour: null };
+    for (const value of group.buckets) {
+      if (!record(value)) throw new Error('schema');
+      if (value.window === 'weekly') pool.weekly = bucket(value);
+      else if (value.window === '5h') pool.fiveHour = bucket(value);
     }
-    let resetsAt: number | null = null;
-    const reset = config.quotaInfo.resetTime;
-    if (typeof reset === 'string' && reset) {
-      const parsed = Date.parse(reset);
-      if (!Number.isFinite(parsed)) throw new Error('schema');
-      resetsAt = Math.floor(parsed / 1000);
-    } else if (reset !== undefined && reset !== null) throw new Error('schema');
-    // shortcut: two pools that share a percentage (or both omit it) and reset in the same minute merge into one row; split them if Antigravity ever names its pools.
-    const key = (remainingPercent === null ? 'missing' : String(remainingPercent)) + '|' + (resetsAt === null ? 'none' : Math.floor(resetsAt / 60));
-    const pool = pools.get(key) || { name: '', models: [], remainingPercent, resetsAt, families: new Set<string>() };
-    pool.models.push(config.label);
-    pool.families.add(family(config.modelId, config.label));
-    pools.set(key, pool);
-  }
-  return { observedAt: now, plan, pools: [...pools.values()].map(({ families, ...pool }) => ({ ...pool, name: [...families].join(', ') })) };
+    return pool;
+  });
+  return { observedAt: now, pools };
 }
 
 async function readCapped(response: Response, limit: number): Promise<string | null> {

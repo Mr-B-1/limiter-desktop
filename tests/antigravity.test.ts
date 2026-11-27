@@ -6,54 +6,41 @@ import os from 'node:os';
 import path from 'node:path';
 import { AntigravityProvider, parseAntigravity, readAntigravity, type AntigravityRead } from '../src/providers/antigravity.js';
 
-// Model ids and labels as Antigravity 2.35.0 reported them on 2026-11-24; the account fields are placeholders that must be dropped.
-const geminiReset = '2026-11-25T01:13:00Z';
-const otherReset = '2026-11-25T01:27:10Z';
-const gemini = ['gemini-4-neon-high', 'gemini-4-carbon-medium', 'gemini-4-argon-low', 'gemini-4-hydrogen-xhigh', 'gemini-3.8-flash-high'];
-const models = [
-  ...gemini.map(id => ({ modelId: id, label: 'Gemini ' + id, quotaInfo: { remainingFraction: 0.8616644, resetTime: geminiReset } })),
-  { modelId: 'gemini-pro-orchestrator-neon', label: 'Orchestrator (Neon)', quotaInfo: { remainingFraction: 0.8616644, resetTime: '2026-11-25T01:13:40Z' } },
-  { modelId: 'claude-opus-5-5-high', label: 'Claude Opus 5.5 (High)', quotaInfo: { remainingFraction: 1, resetTime: otherReset } },
-  { modelId: 'claude-sonnet-5-5-low', label: 'Claude Sonnet 5.5 (Low)', quotaInfo: { remainingFraction: 1, resetTime: otherReset } },
-  { modelId: 'gpt-oss-120b-medium', label: 'GPT-OSS 120B (Medium)', quotaInfo: { remainingFraction: 1, resetTime: otherReset } },
-  { modelId: 'chat-only', label: 'No quota model' },
-];
-const reply = { userStatus: { email: 'person@example.invalid', name: 'Placeholder Person', planStatus: { planInfo: { planName: 'Pro', teamsTier: 'TEAMS_TIER_PRO' } }, cascadeModelConfigData: { clientModelConfigs: models } } };
+// RetrieveUserQuotaSummary as Antigravity reported it on 2026-11-25 (fractions and reset times as observed at 10:38 PST).
+const geminiWeekReset = '2026-12-01T21:24:35Z';
+const gemini5hReset = '2026-11-25T20:58:20Z';
+const bucketOf = (id: string, window: string, remainingFraction: unknown, resetTime: unknown) => ({ bucketId: id, displayName: window === 'weekly' ? 'Weekly Limit Remaining' : 'Five Hour Limit Remaining', window, remainingFraction, resetTime });
+const reply = { response: {
+  description: 'Within each group, models share a weekly limit and a 5-hour limit.',
+  groups: [
+    { displayName: 'Gemini Models', description: 'Models within this group: Gemini 4 Neon, Gemini 4 Carbon, Orchestrator (Neon), Gemini 3.8 Flash',
+      buckets: [bucketOf('gemini-weekly', 'weekly', 0.88471144, geminiWeekReset), bucketOf('gemini-5h', '5h', 0.8898287, gemini5hReset)] },
+    { displayName: 'Claude and GPT models', description: 'Models within this group: Claude Opus 5.5, Claude Sonnet 5.5, GPT-OSS 120B',
+      buckets: [bucketOf('3p-weekly', 'weekly', 0.9167813, '2026-12-01T21:38:55Z'), bucketOf('3p-5h', '5h', 1, '2026-11-25T21:53:03Z')] },
+  ] } };
 
-test('Antigravity groups models by shared quota and names each pool by model family', () => {
+test('Antigravity reads each group with its weekly and 5-hour buckets', () => {
   const snapshot = parseAntigravity(reply, 100);
-  assert.equal(snapshot.plan, 'Pro');
-  assert.deepEqual(snapshot.pools.map(pool => [pool.name, pool.remainingPercent, pool.models.length]), [['Gemini', 86.2, 6], ['Claude, GPT', 100, 3]]);
-  assert.equal(snapshot.pools[0].resetsAt, Math.floor(Date.parse(geminiReset) / 1000));
+  assert.deepEqual(snapshot.pools.map(pool => [pool.name, pool.weekly?.remainingPercent, pool.fiveHour?.remainingPercent, pool.models.length]),
+    [['Gemini', 88.5, 89, 4], ['Claude, GPT', 91.7, 100, 3]]);
+  assert.equal(snapshot.pools[0].weekly?.resetsAt, Math.floor(Date.parse(geminiWeekReset) / 1000));
+  assert.equal(snapshot.pools[0].fiveHour?.resetsAt, Math.floor(Date.parse(gemini5hReset) / 1000));
   assert.ok(snapshot.pools[0].models.includes('Orchestrator (Neon)'));
-  assert.doesNotMatch(JSON.stringify(snapshot), /example\.invalid|Placeholder|TEAMS_TIER/);
+  assert.equal(snapshot.observedAt, 100);
 });
-test('Antigravity keeps a missing fraction as null, preserves explicit zero, separates missing from zero, and rejects invalid schemas', () => {
-  const mixed = parseAntigravity({
-    userStatus: {
-      cascadeModelConfigData: {
-        clientModelConfigs: [
-          { modelId: 'gemini-a', label: 'Gemini A', quotaInfo: { resetTime: geminiReset } },
-          { modelId: 'gemini-b', label: 'Gemini B', quotaInfo: { remainingFraction: null, resetTime: geminiReset } },
-          { modelId: 'claude-z', label: 'Claude Z', quotaInfo: { remainingFraction: 0, resetTime: geminiReset } },
-        ],
-      },
-    },
-  });
-  assert.equal(mixed.plan, null);
-  assert.deepEqual(
-    mixed.pools.map(pool => [pool.name, pool.remainingPercent, pool.models]),
-    [
-      ['Gemini', null, ['Gemini A', 'Gemini B']],
-      ['Claude', 0, ['Claude Z']],
-    ],
-  );
+test('Antigravity keeps a missing fraction as null, preserves explicit zero, ignores unknown windows, and rejects invalid schemas', () => {
+  const group = (buckets: unknown[], description?: unknown) => ({ response: { groups: [{ displayName: 'Gemini Models', description, buckets }] } });
+  const mixed = parseAntigravity(group([bucketOf('w', 'weekly', undefined, geminiWeekReset), bucketOf('f', '5h', 0, gemini5hReset), bucketOf('m', 'monthly', 0.5, gemini5hReset)]));
+  assert.deepEqual(mixed.pools, [{ name: 'Gemini', models: [], weekly: { remainingPercent: null, resetsAt: Math.floor(Date.parse(geminiWeekReset) / 1000) }, fiveHour: { remainingPercent: 0, resetsAt: Math.floor(Date.parse(gemini5hReset) / 1000) } }]);
+  assert.equal(parseAntigravity(group([bucketOf('w', 'weekly', null, null)])).pools[0].fiveHour, null);
   assert.throws(() => parseAntigravity({}));
+  assert.throws(() => parseAntigravity({ response: {} }));
   assert.throws(() => parseAntigravity({ userStatus: {} }));
-  assert.throws(() => parseAntigravity({ userStatus: { cascadeModelConfigData: { clientModelConfigs: [{ label: 'X', quotaInfo: { remainingFraction: 1.5 } }] } } }));
-  assert.throws(() => parseAntigravity({ userStatus: { cascadeModelConfigData: { clientModelConfigs: [{ label: 'X', quotaInfo: { remainingFraction: -0.1 } }] } } }));
-  assert.throws(() => parseAntigravity({ userStatus: { cascadeModelConfigData: { clientModelConfigs: [{ label: 'X', quotaInfo: { remainingFraction: '0.5' } }] } } }));
-  assert.throws(() => parseAntigravity({ userStatus: { cascadeModelConfigData: { clientModelConfigs: [{ label: 'X', quotaInfo: { resetTime: 'soon' } }] } } }));
+  assert.throws(() => parseAntigravity(group([bucketOf('w', 'weekly', 1.5, null)])));
+  assert.throws(() => parseAntigravity(group([bucketOf('w', 'weekly', -0.1, null)])));
+  assert.throws(() => parseAntigravity(group([bucketOf('w', 'weekly', '0.5', null)])));
+  assert.throws(() => parseAntigravity(group([bucketOf('w', 'weekly', 0.5, 'soon')])));
+  assert.throws(() => parseAntigravity({ response: { groups: [{ displayName: '', buckets: [] }] } }));
 });
 test('Antigravity reader maps HTTP 401/403 to signed-out and HTTP 500 to compatibility', async () => {
   const daemon = await mkdtemp(path.join(os.tmpdir(), 'limiter-antigravity-http-'));
@@ -95,7 +82,7 @@ test('Antigravity reader skips a dead hub file, sends the token only to its serv
     await utimes(path.join(daemon, 'hub_' + live + '.json'), older, older);
     const result = await readAntigravity(daemon);
     assert.equal(result.ok, true);
-    assert.deepEqual(seen, { token: 'test-token-live', path: '/exa.language_server_pb.LanguageServerService/GetUserStatus' });
+    assert.deepEqual(seen, { token: 'test-token-live', path: '/exa.language_server_pb.LanguageServerService/RetrieveUserQuotaSummary' });
     await rm(path.join(daemon, 'hub_' + live + '.json'));
     assert.deepEqual(await readAntigravity(daemon), { ok: false, status: 'closed' });
     assert.deepEqual(await readAntigravity(path.join(daemon, 'missing')), { ok: false, status: 'absent' });
@@ -115,7 +102,7 @@ test('Antigravity keeps the last reading as stale when the app closes, and clear
   await provider.refresh();
   assert.equal(provider.state().status, 'closed');
   assert.equal(provider.state().stale, true);
-  assert.equal(provider.state().snapshot?.pools[0].remainingPercent, 86.2);
+  assert.equal(provider.state().snapshot?.pools[0].weekly?.remainingPercent, 88.5);
   result = { ok: true, body: { changed: true } };
   await provider.refresh();
   assert.equal(provider.state().status, 'compatibility');

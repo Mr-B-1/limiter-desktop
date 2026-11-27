@@ -25,3 +25,10 @@ export function formatDiskBytes(bytes: number): string {
   while (value >= 1000 && unit < units.length - 1) { value /= 1000; unit++; }
   return value.toLocaleString('en-US', { maximumFractionDigits: 1 }) + ' ' + units[unit];
 }
+export function compactDiskBytes(bytes: number): string {
+  const units = ['B', 'kB', 'MB', 'GB', 'TB', 'PB'];
+  let value = bytes;
+  let unit = 0;
+  while (value >= 1000 && unit < units.length - 1) { value /= 1000; unit++; }
+  return value.toLocaleString('en-US', { maximumFractionDigits: unit > 0 && value < 10 ? 1 : 0 }) + ' ' + units[unit];
+}

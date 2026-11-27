@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { parseRemoteDf, readRemote, STORAGE_INTERVAL_MS, StorageProvider, type StorageConfig } from '../src/providers/storage.js';
-import { formatDiskBytes, validHost, validLabel, type DiskSpace } from '../src/shared/storage.js';
+import { compactDiskBytes, formatDiskBytes, validHost, validLabel, type DiskSpace } from '../src/shared/storage.js';
 
 const withRemote = (): StorageConfig => ({ localLabel: 'This PC', localVolume: 'C:', remote: { host: 'server', label: 'Server' } });
 
@@ -13,6 +13,11 @@ test('a remote df reply accepts exact bytes, including a full disk; malformed da
     assert.throws(() => parseRemoteDf(invalid));
   assert.equal(formatDiskBytes(26831876096), '26.8 GB');
   assert.equal(formatDiskBytes(0), '0 B');
+  assert.equal(compactDiskBytes(0), '0 B');
+  assert.equal(compactDiskBytes(512), '512 B');
+  assert.equal(compactDiskBytes(45.6e6), '46 MB');
+  assert.equal(compactDiskBytes(157.4e9), '157 GB');
+  assert.equal(compactDiskBytes(1.24e12), '1.2 TB');
 });
 
 test('only a plain SSH host name is accepted, never anything ssh could read as an option', async () => {

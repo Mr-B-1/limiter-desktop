@@ -11,7 +11,7 @@ import { LoginItem, memoryLoginItemOs } from './services/login-item.js';
 import { spawn } from 'node:child_process';
 import { CodexProvider } from './providers/codex.js';
 import { Coordinator } from './services/scheduler.js';
-import { PreferenceStore, clampBounds, COMPACT_SIZE, parsePreferences, type Preferences } from './services/store.js';
+import { PreferenceStore, clampBounds, COMPACT_SIZE, DEFAULT_SIZE, parsePreferences, type Preferences } from './services/store.js';
 import { DesktopSurface } from './services/desktop.js';
 import { nativeMachine } from './services/emulation.js';
 import { DOWNLOAD_PAGE, displayTimeZone, wrongBuildForPc } from './shared/platform.js';
@@ -28,7 +28,7 @@ import { claudeWindow, codexWindow, rank } from './services/projects.js';
 import { GrokProvider, readGrokQuota } from './providers/grok.js';
 import { ANTIGRAVITY_DAEMON, AntigravityProvider, readAntigravity } from './providers/antigravity.js';
 import { StorageProvider, type StorageConfig } from './providers/storage.js';
-import { emptyStorage, formatDiskBytes, validHost, validLabel } from './shared/storage.js';
+import { compactDiskBytes, emptyStorage, validHost, validLabel } from './shared/storage.js';
 import { defaultRoots } from './shared/projects.js';
 import type { DisplayState, Theme } from './shared/usage.js';
 
@@ -503,7 +503,7 @@ async function boot(): Promise<void> {
   firstRun = store.fresh;
   startWithWindowsState = loginItem.enabled();
   startupShortcutState = !!startupShortcut() && existsSync(startupShortcut()!);
-  if (testing && !preferences.bounds) { const area = screen.getPrimaryDisplay().workArea; preferences.bounds = { x: area.x + 80, y: area.y + 80, ...COMPACT_SIZE }; }
+  if (testing && !preferences.bounds) { const area = screen.getPrimaryDisplay().workArea; preferences.bounds = { x: area.x + 80, y: area.y + 80, ...DEFAULT_SIZE }; }
   settingsNotice = store.notice;
   await recordLaunch('start');
   nativeTheme.themeSource = preferences.theme;
@@ -728,7 +728,7 @@ async function smoke(): Promise<void> {
     receipt.firstRun = firstRunPanel;
     receipt.timeZone = timeZone ?? null;
     const selected = first.snapshot?.windows.find(item => item.key === first.snapshot?.selectedKey);
-    if (selected?.remainingPercent !== null && selected?.remainingPercent !== undefined && isolation.percent !== String(selected.remainingPercent) + '% left') throw new Error('Displayed remaining percentage disagrees with source snapshot');
+    if (selected?.remainingPercent !== null && selected?.remainingPercent !== undefined && isolation.percent !== Math.round(selected.remainingPercent) + '%') throw new Error('Displayed remaining percentage disagrees with source snapshot');
     const native = desktop!.inspect();
     if (!native.attached || !native.childStyle || native.topmost || !['Progman', 'WorkerW'].includes(String(native.rootClass))) throw new Error('Not attached to the desktop');
     const cover = new BrowserWindow({ ...desktop!.bounds(), title: 'Limiter verification cover', show: false, frame: false, skipTaskbar: true, backgroundColor: '#253021',
@@ -796,11 +796,11 @@ async function smoke(): Promise<void> {
     rememberBounds(true); await persist();
     await Promise.all([storage.refresh(), antigravity.refresh()]);
     const storageView = storage.state();
-    const readStorageUi = () => window!.webContents.executeJavaScript('({local:document.getElementById("local-free").textContent,localLabel:document.getElementById("local-label").textContent,remoteHidden:document.getElementById("remote-card").hidden,grokHidden:document.getElementById("grok-card").hidden,antigravityRows:[...document.querySelectorAll(".antigravity-card")].filter(el=>!el.hidden).length,missingBilling:!document.getElementById("xai-card"),fits:[...document.querySelectorAll(".disk-row")].filter(el=>!el.closest(".card").hidden).every(el=>el.scrollWidth<=el.clientWidth)})');
+    const readStorageUi = () => window!.webContents.executeJavaScript('({local:document.getElementById("local-free").textContent,localLabel:document.getElementById("local-label").textContent,remoteHidden:document.getElementById("remote-card").hidden,grokHidden:document.getElementById("grok-card").hidden,antigravityRows:[...document.querySelectorAll(".antigravity-card")].filter(el=>!el.hidden).length,missingBilling:!document.getElementById("xai-card"),fits:[...document.querySelectorAll(".ring-tile")].filter(el=>!el.hidden).every(el=>el.scrollWidth<=el.clientWidth)})');
     const storageUi = await readStorageUi();
     const localReading = storageView.local.reading;
     // Fresh profile: one local disk named after the PC, no remote disk, no Grok row and no Antigravity rows.
-    if (!storageUi.missingBilling || !storageUi.fits || !localReading || storageView.local.status !== 'ready' || storageUi.local !== formatDiskBytes(localReading.freeBytes) + ' free' ||
+    if (!storageUi.missingBilling || !storageUi.fits || !localReading || storageView.local.status !== 'ready' || storageUi.local !== compactDiskBytes(localReading.freeBytes) ||
         storageUi.localLabel !== os.hostname() || storageView.remote.status !== 'off' || !storageUi.remoteHidden || !storageUi.grokHidden ||
         storageUi.antigravityRows !== 0 || display().antigravity.status !== 'absent')
       throw new Error('Fresh-profile rows are wrong: ' + JSON.stringify({ storageUi, local: storageView.local.status, remote: storageView.remote.status, antigravity: display().antigravity.status }));
@@ -841,7 +841,7 @@ async function smoke(): Promise<void> {
     if (calibrated.mode === 'unavailable' || (calibrated.coverage.replies > 0 && (calibrated.mode !== 'estimate' || Math.abs((calibrated.weekly.percent ?? -1) - 50) > 1)))
       throw new Error('Claude reading did not produce a matching estimate: ' + JSON.stringify({ mode: calibrated.mode, weekly: calibrated.weekly, exact: calibrated.exact, anchor: calibrated.anchor, modState: modReader.state().status }));
     const shownClaude = await window.webContents.executeJavaScript('document.getElementById("claude-percent").textContent');
-    if (calibrated.mode === 'estimate' && !/^≈\d+(\.\d)?% left$/.test(shownClaude)) throw new Error('Claude card does not show the estimated remaining capacity');
+    if (calibrated.mode === 'estimate' && !/^≈\d+%$/.test(shownClaude)) throw new Error('Claude card does not show the estimated remaining capacity');
     receipt.claudeEstimate = { mode: calibrated.mode, weeklyUsedPercent: calibrated.weekly.percent, shown: shownClaude, replies: calibrated.coverage.replies, unknownModels: calibrated.coverage.unknownModels };
     // A mod file written into the profile must flip the row to exact, with no ≈ mark, and re-anchor the estimate.
     const fixtureReset = new Date(Date.now() + 3 * 3600000).toISOString();
@@ -851,7 +851,7 @@ async function smoke(): Promise<void> {
     await wait(200);
     const exactView = display().claude;
     const shownExact = await window.webContents.executeJavaScript('document.getElementById("claude-percent").textContent');
-    if (exactView.mode !== 'exact' || exactView.exact?.source !== 'mod' || exactView.weekly.percent !== 61 || shownExact !== '39% left') throw new Error('Mod file did not produce an exact Claude reading');
+    if (exactView.mode !== 'exact' || exactView.exact?.source !== 'mod' || exactView.weekly.percent !== 61 || shownExact !== '39%') throw new Error('Mod file did not produce an exact Claude reading');
     receipt.claudeExact = { mode: exactView.mode, source: exactView.exact?.source, host: exactView.exact?.host, shown: shownExact, anchor: exactView.anchor };
     // One synthetic Codex session written twice, plain and compressed, must count once under its project with exact tokens.
     const rolloutDirectory = path.join(stateRoot, 'codex-sessions', 'smoke');
@@ -890,12 +890,12 @@ async function smoke(): Promise<void> {
     const claudeReplies = display().claude.coverage.replies;
     if (claudeReplies > 0 && !projectState.claude.rows.length) throw new Error('Claude project ranking is empty although replies were read');
     const metaFit = await window.webContents.executeJavaScript('["codex-meta","claude-meta"].map(id => { const span = document.getElementById(id); return { id, text: span.textContent, clipped: span.scrollWidth > span.clientWidth }; })');
-    if (metaFit.some((item: { text: string; clipped: boolean }) => item.clipped && / · \S.* \d+(\.\d)?%$/.test(item.text))) throw new Error('A leader tag was clipped on a row meta line');
+    const codexLabel = await window.webContents.executeJavaScript('document.getElementById("codex-card").getAttribute("aria-label") || ""');
     await window.webContents.executeJavaScript('document.getElementById("codex-card").click()');
     const projectPanel = await window.webContents.executeJavaScript('({text:document.getElementById("details-content").textContent,overflow:document.getElementById("details").scrollWidth>document.getElementById("details").clientWidth})');
     await window.webContents.executeJavaScript('document.getElementById("close-details").click()');
     if (!projectPanel.text.startsWith('By project · weighted local usageSmokeProject · 100% · 3k tokens') || projectPanel.overflow) throw new Error('Codex panel does not open with the fixture project list: ' + projectPanel.text.slice(0, 80));
-    if (!metaFit.find((item: { id: string; text: string }) => item.id === 'codex-meta')?.text.endsWith(' · SmokeProject 100%')) throw new Error('Codex row line does not name its top project');
+    if (!codexLabel.includes('SmokeProject 100%')) throw new Error('Codex tile aria-label does not name its top project');
     receipt.projects = { codex: { leader: codexLeader, coverage: codexCoverage, window: projectState.codex.window }, claude: { rows: projectState.claude.rows.length, leader: projectState.claude.rows[0]?.name ?? null, replies: claudeReplies, window: projectState.claude.window },
       metaFit, codexReads: codexReader.counts };
     // Alerts, pace and the toast prerequisites are exercised here; a real toast is never shown during a smoke run.
@@ -904,7 +904,7 @@ async function smoke(): Promise<void> {
     // A fresh tracker, because the live pass above may already have fired for rows that really are low.
     const toasts = new AlertTracker().evaluate(lowRows);
     if (toasts.length !== lowRows.filter(row => row.resetsAt !== null).length * 2) throw new Error('Low-capacity alerts did not fire once per threshold');
-    const paceShown = await window.webContents.executeJavaScript('({ marker: document.getElementById("claude-pace").hidden, meta: document.getElementById("claude-meta").textContent })');
+    const paceShown = await window.webContents.executeJavaScript('({ marker: document.getElementById("claude-pace").hasAttribute("hidden"), meta: document.getElementById("claude-meta").textContent })');
     receipt.alerts = { toastsSupported: Notification.isSupported(), toastsEvaluated: toasts.length, startMenuShortcut, paceShown, gatePaused: gate.paused, migratedLegacyState,
       launchGuard: { insidePackage: insidePackage(), startedByAgent: startedByAgent(), wouldRelaunch: sandboxed } };
     receipt.grok = { status: display().grok.status, remainingPercent: display().grok.snapshot?.remainingPercent ?? null };

@@ -17,30 +17,25 @@
       </div>
     </header>
     <main aria-label="Usage and disk space">
-      <button id="codex-card" class="card" aria-label="Codex remaining capacity details">
-        <span class="row"><span class="name"><i class="dot codex"></i>Codex <small>week</small></span><strong id="percent">··</strong></span>
-        <span id="meter" class="meter" role="progressbar" aria-label="Codex weekly capacity remaining" aria-valuemin="0" aria-valuemax="100"><span id="fill"></span><i id="codex-pace" class="pace" hidden></i></span>
-        <span class="row meta"><span id="codex-meta">Connecting</span><span id="codex-reset"></span></span>
+      <button id="codex-card" class="card ring-tile" aria-label="Codex remaining capacity details">
+        <span id="meter" class="ring" role="progressbar" aria-label="Codex weekly capacity remaining" aria-valuemin="0" aria-valuemax="100"><svg viewBox="0 0 46 46" width="46" height="46" aria-hidden="true"><circle class="track" cx="23" cy="23" r="20"></circle><circle id="fill" class="arc" cx="23" cy="23" r="20"></circle><line id="codex-pace" class="pace-tick" hidden></line></svg><strong id="percent">··</strong></span>
+        <span class="tile-label"><span class="tile-name">Codex</span><small id="codex-meta">Connecting</small></span>
       </button>
-      <button id="claude-card" class="card" aria-label="Claude Code remaining capacity details">
-        <span class="row"><span class="name"><i class="dot claude"></i>Claude Code <small>week</small></span><strong id="claude-percent">··</strong></span>
-        <span id="claude-meter" class="meter" role="progressbar" aria-label="Claude weekly capacity remaining" aria-valuemin="0" aria-valuemax="100"><span id="claude-fill"></span><i id="claude-pace" class="pace" hidden></i></span>
-        <span class="row meta"><span id="claude-meta">Reading local logs</span><span id="claude-short"></span></span>
+      <button id="claude-card" class="card ring-tile" aria-label="Claude Code remaining capacity details">
+        <span id="claude-meter" class="ring" role="progressbar" aria-label="Claude weekly capacity remaining" aria-valuemin="0" aria-valuemax="100"><svg viewBox="0 0 46 46" width="46" height="46" aria-hidden="true"><circle class="track" cx="23" cy="23" r="20"></circle><circle id="claude-fill" class="arc claude" cx="23" cy="23" r="20"></circle><line id="claude-pace" class="pace-tick" hidden></line></svg><strong id="claude-percent">··</strong></span>
+        <span class="tile-label"><span class="tile-name">Claude Code</span><small id="claude-meta">Reading logs</small></span>
       </button>
-      <button id="grok-card" class="card" aria-label="Grok subscription usage details">
-        <span class="row"><span class="name"><i class="dot grok"></i>Grok <small id="grok-period">sub</small></span><strong id="grok-percent">··</strong></span>
-        <span id="grok-meter" class="meter" role="progressbar" aria-label="Grok subscription capacity remaining" aria-valuemin="0" aria-valuemax="100"><span id="grok-fill"></span><i id="grok-pace" class="pace" hidden></i></span>
-        <span class="row meta"><span id="grok-meta">Connecting</span><span id="grok-reset"></span></span>
+      <button id="grok-card" class="card ring-tile" aria-label="Grok subscription usage details">
+        <span id="grok-meter" class="ring" role="progressbar" aria-label="Grok subscription capacity remaining" aria-valuemin="0" aria-valuemax="100"><svg viewBox="0 0 46 46" width="46" height="46" aria-hidden="true"><circle class="track" cx="23" cy="23" r="20"></circle><circle id="grok-fill" class="arc grok" cx="23" cy="23" r="20"></circle><line id="grok-pace" class="pace-tick" hidden></line></svg><strong id="grok-percent">··</strong></span>
+        <span class="tile-label"><span class="tile-name">Grok</span><small id="grok-meta">Connecting</small></span>
       </button>
-      <button id="local-card" class="card" aria-label="This PC disk space details">
-        <span class="row disk-row"><span class="name"><i class="dot disk"></i><span id="local-label">This PC</span> <small id="local-volume">C:</small></span><strong id="local-free" class="disk-value">Checking…</strong></span>
-        <span id="local-meter" class="meter" role="meter" aria-label="This PC disk space free" aria-valuemin="0" aria-valuemax="100"><span id="local-fill"></span></span>
-        <span class="row meta"><span id="local-total">Disk space</span><span id="local-age"></span></span>
+      <button id="local-card" class="card ring-tile" aria-label="This PC disk space details">
+        <span id="local-meter" class="ring" role="meter" aria-label="This PC disk space free" aria-valuemin="0" aria-valuemax="100"><svg viewBox="0 0 46 46" width="46" height="46" aria-hidden="true"><circle class="track" cx="23" cy="23" r="20"></circle><circle id="local-fill" class="arc disk" cx="23" cy="23" r="20"></circle></svg><strong id="local-free" class="disk-value">··</strong></span>
+        <span class="tile-label"><span id="local-label" class="tile-name">This PC</span><small id="local-volume">C:</small></span>
       </button>
-      <button id="remote-card" class="card" aria-label="Remote disk space details" hidden>
-        <span class="row disk-row"><span class="name"><i class="dot disk"></i><span id="remote-label">Remote</span> <small id="remote-volume">/</small></span><strong id="remote-free" class="disk-value">Checking…</strong></span>
-        <span id="remote-meter" class="meter" role="meter" aria-label="Remote disk space free" aria-valuemin="0" aria-valuemax="100"><span id="remote-fill"></span></span>
-        <span class="row meta"><span id="remote-total">Disk space</span><span id="remote-age"></span></span>
+      <button id="remote-card" class="card ring-tile" aria-label="Remote disk space details" hidden>
+        <span id="remote-meter" class="ring" role="meter" aria-label="Remote disk space free" aria-valuemin="0" aria-valuemax="100"><svg viewBox="0 0 46 46" width="46" height="46" aria-hidden="true"><circle class="track" cx="23" cy="23" r="20"></circle><circle id="remote-fill" class="arc disk" cx="23" cy="23" r="20"></circle></svg><strong id="remote-free" class="disk-value">··</strong></span>
+        <span class="tile-label"><span id="remote-label" class="tile-name">Remote</span><small id="remote-volume">/</small></span>
       </button>
     </main>
     <footer><span id="age">Awaiting first read</span><span class="desktop-label">DESKTOP</span></footer>

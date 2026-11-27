@@ -65,5 +65,5 @@ test('a resized desktop widget keeps its dimensions after a new store loads the 
 test('v1 floating preferences migrate to the compact desktop layout while preserving position and theme', () => {
   const parsed = parsePreferences({ ...defaults(), schemaVersion: 1, pinned: true, theme: 'dark', bounds: { x: -700, y: 45, width: 324, height: 452 } });
   assert.equal(parsed.schemaVersion, 3); assert.equal(parsed.pinned, false); assert.equal(parsed.theme, 'dark');
-  assert.deepEqual(parsed.bounds, { x: -700, y: 45, width: 270, height: 346 });
+  assert.deepEqual(parsed.bounds, { x: -700, y: 45, width: 270, height: 220 });
 });

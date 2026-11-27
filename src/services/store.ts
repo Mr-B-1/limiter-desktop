@@ -28,9 +28,10 @@ export interface Preferences {
   // Optional second disk read over SSH; null hides that row.
   remoteDisk: RemoteDisk | null;
 }
-export const COMPACT_SIZE = { width: 270, height: 346 };
-// A fresh widget fits five 84px rows plus the header, footer and border. Saved sizes keep the original minimum.
-const FIRST_LAUNCH_SIZE = { width: COMPACT_SIZE.width, height: 480 };
+export const COMPACT_SIZE = { width: 270, height: 220 };
+// A fresh widget starts in the compact four-column ring layout (340 x 230) while keeping 270 x 220 as the resize minimum.
+export const DEFAULT_SIZE = { width: 340, height: 230 };
+const FIRST_LAUNCH_SIZE = DEFAULT_SIZE;
 export const defaults = (): Preferences => ({ schemaVersion: 3, pinned: false, theme: 'system', bounds: null, codexPath: null, lastCodexPath: null, claudeCalibration: null,
   projectsRoot: null, grokcliRoot: null, localDiskLabel: null, remoteDisk: null });
 function folder(item: unknown): string | null {

@@ -13,40 +13,41 @@ body { margin:0; color:var(--ink); background:var(--bg); user-select:none; overf
 button,select { font:inherit; color:inherit; }
 button { background:none; border:0; cursor:pointer; }
 button:focus-visible,select:focus-visible { outline:2px solid var(--accent); outline-offset:-2px; }
-.titlebar { height:33px; min-height:33px; padding:0 8px 0 13px; border-bottom:1px solid var(--line); display:flex; align-items:center; justify-content:space-between; -webkit-app-region:drag; }
+.titlebar { height:30px; min-height:30px; padding:0 8px 0 13px; border-bottom:1px solid var(--line); display:flex; align-items:center; justify-content:space-between; -webkit-app-region:drag; }
 .brand { display:flex; align-items:center; gap:8px; font-size:9px; letter-spacing:1.9px; color:var(--muted); }
 .brand i { color:var(--accent); font:900 17px "Consolas",monospace; letter-spacing:-5px; width:13px; transform:rotate(12deg); }
 .controls { display:flex; -webkit-app-region:no-drag; }
-.controls button { width:25px; height:26px; color:var(--muted); font-size:17px; border-radius:4px; }
+.controls button { width:25px; height:24px; color:var(--muted); font-size:17px; border-radius:4px; }
 button:hover { background:var(--panel); }
 .controls button:disabled { opacity:.4; cursor:default; }
-/* Keep the scrollbar clear of the window's resize handles. Only the list scrolls. */
-main { margin:0 5px; padding:0 7px; flex:1; min-height:0; display:flex; flex-direction:column; overflow-y:auto; overflow-x:hidden; scrollbar-width:thin; overscroll-behavior:contain; }
-.card { width:100%; text-align:left; padding:10px 0 8px; flex:0 0 84px; border-bottom:1px solid var(--line); display:flex; flex-direction:column; justify-content:center; }
-.card:last-child { border-bottom:0; }
-.row { display:flex; align-items:center; justify-content:space-between; gap:6px; min-width:0; }
-.name { display:flex; align-items:center; gap:6px; white-space:nowrap; font-weight:500; font-size:12px; }
-.name small { color:var(--muted); font-size:9px; font-weight:400; }
-.dot { width:6px; height:6px; border-radius:50%; background:var(--accent); flex:none; }
-.dot.claude { background:var(--claude); }.dot.grok { background:var(--grok); }.dot.antigravity { background:var(--antigravity); }
-strong { font-weight:500; }
-.card strong { font-size:21px; letter-spacing:-.6px; font-variant-numeric:tabular-nums; line-height:23px; white-space:nowrap; }
-.dot.disk { background:var(--muted); }
-.meter { display:block; position:relative; height:3px; min-height:3px; background:var(--line); margin:6px 0 7px; border-radius:2px; overflow:hidden; }
-.pace { position:absolute; top:0; bottom:0; width:2px; margin-left:-1px; background:var(--ink); opacity:.55; }
-.meter>span { display:block; height:100%; width:0; background:var(--accent); }
-#claude-meter>span { background:var(--claude); }
-#grok-meter>span { background:var(--grok); }
-.antigravity-meter>span { background:var(--antigravity); }
-/* An Antigravity reading kept after the app closed is greyed; long pool names truncate before the percentage. */
-.card[data-stale="true"] strong, .card[data-stale="true"] .meter { opacity:.5; }
-.antigravity-card .name { min-width:0; }.antigravity-card .name small { overflow:hidden; text-overflow:ellipsis; }
-.meter[data-tone="warn"]>span, #claude-meter[data-tone="warn"]>span { background:var(--warn); }.meter[data-tone="bad"]>span, #claude-meter[data-tone="bad"]>span { background:var(--bad); }
-.meta { color:var(--muted); font-size:9px; line-height:12px; white-space:nowrap; }
-.meta>span:first-child { min-width:0; overflow:hidden; text-overflow:ellipsis; }
-footer { height:25px; min-height:25px; display:flex; align-items:center; justify-content:space-between; padding:0 12px; border-top:1px solid var(--line); color:var(--muted); font-size:9px; }
+/* Keep the scrollbar clear of the window's resize handles. Only the ring grid scrolls. */
+main { margin:0 5px; padding:6px 6px 5px; flex:1; min-height:0; display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); grid-auto-rows:minmax(75px,1fr); gap:6px 4px; overflow-y:auto; overflow-x:hidden; scrollbar-width:thin; overscroll-behavior:contain; }
+/* Rows share the window's height and each tile is a size container, so rings grow and shrink with the window; below 75px rows the grid scrolls. */
+.ring-tile { width:100%; container-type:size; padding:2px; border:0; border-radius:6px; display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center; gap:2px; min-width:0; }
+.ring { position:relative; width:max(46px, min(80cqw, 100cqh - 29px)); aspect-ratio:1; flex:none; display:block; }
+.ring svg { display:block; width:100%; height:100%; transform:rotate(-90deg); }
+.ring strong { position:absolute; inset:0; display:grid; place-items:center; font-size:max(11px, min(19cqw, (100cqh - 29px) * .24)); font-weight:600; font-variant-numeric:tabular-nums; letter-spacing:-.2px; line-height:1; white-space:nowrap; }
+.ring .track { fill:none; stroke:var(--line); stroke-width:4; }
+.ring .arc { fill:none; stroke:var(--accent); stroke-width:4; stroke-linecap:round; }
+.ring .arc.claude { stroke:var(--claude); }.ring .arc.grok { stroke:var(--grok); }.ring .arc.antigravity { stroke:var(--antigravity); }.ring .arc.disk { stroke:var(--muted); }
+.ring[data-tone="warn"] .arc, .ring[data-tone="warn"] .arc.claude, .ring[data-tone="warn"] .arc.grok, .ring[data-tone="warn"] .arc.antigravity, .ring[data-tone="warn"] .arc.disk { stroke:var(--warn); }
+.ring[data-tone="bad"] .arc, .ring[data-tone="bad"] .arc.claude, .ring[data-tone="bad"] .arc.grok, .ring[data-tone="bad"] .arc.antigravity, .ring[data-tone="bad"] .arc.disk { stroke:var(--bad); }
+.ring .pace-tick { stroke:var(--ink); stroke-width:1.6; opacity:.8; }
+/* Antigravity's inner ring is its 5-hour limit. It carries its own tone, so these rules outrank the outer ring's data-tone rules,
+   and the centre number is smaller so it fits inside the inner ring. */
+.ring .track.inner { stroke-width:3; }
+.ring .arc.inner[data-tone] { stroke:var(--antigravity); stroke-width:3; }
+.ring .arc.inner[data-tone="warn"] { stroke:var(--warn); }
+.ring .arc.inner[data-tone="bad"] { stroke:var(--bad); }
+.antigravity-card .ring strong { font-size:max(10px, min(16cqw, (100cqh - 29px) * .2)); }
+/* An Antigravity reading kept after the app closed, or a stale disk read, is greyed. */
+.card[data-stale="true"] .ring { opacity:.5; }
+.tile-label { display:flex; flex-direction:column; align-items:center; width:100%; min-width:0; line-height:1.2; }
+.tile-name { font-size:10.5px; font-weight:500; white-space:nowrap; max-width:100%; overflow:hidden; text-overflow:ellipsis; }
+.tile-label small { display:block; color:var(--muted); font-size:8.5px; font-weight:400; white-space:nowrap; max-width:100%; overflow:hidden; text-overflow:ellipsis; }
+footer { height:24px; min-height:24px; display:flex; align-items:center; justify-content:space-between; padding:0 12px; border-top:1px solid var(--line); color:var(--muted); font-size:9px; }
 .desktop-label { letter-spacing:1.3px; font-size:8px; }
-.details { position:absolute; inset:33px 1px 1px; background:var(--bg); padding:0 12px 12px; overflow:auto; z-index:2; }
+.details { position:absolute; inset:30px 1px 1px; background:var(--bg); padding:0 12px 12px; overflow:auto; z-index:2; }
 .detail-heading { display:flex; align-items:center; justify-content:space-between; padding:8px 0; border-bottom:1px solid var(--line); }
 .detail-heading strong { font-size:13px; }.detail-heading button { font-size:20px; width:26px; height:24px; }
 .details p { color:var(--muted); line-height:1.5; margin:9px 0; overflow-wrap:anywhere; }

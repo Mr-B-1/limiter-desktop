@@ -1,7 +1,7 @@
 import { ageLabel, countdown, resetLabel, windowLabel, type DisplayState, type Theme } from '../shared/usage.js';
 import { FIVE_HOUR_MS, WEEK_MS, paceOf, type Pace } from '../shared/pace.js';
 import { installResize } from './resize.js';
-import { diskIds, formatDiskBytes, type StorageState } from '../shared/storage.js';
+import { compactDiskBytes, diskIds, formatDiskBytes, type StorageState } from '../shared/storage.js';
 
 installResize(request => window.limiter.resize(request));
 
@@ -30,49 +30,60 @@ let current: DisplayState | null = null;
 // Formats a reset or run-out time in the zone the main process resolved, which can differ from this window's ICU default.
 function reset(epochSeconds: number | null): string { return resetLabel(epochSeconds, current?.timeZone); }
 let panel: 'codex' | 'claude' | 'grok' | 'antigravity' | 'storage' | 'settings' | null = null;
+const SVG_NS = 'http://www.w3.org/2000/svg';
+const RING_CIRCUMFERENCE = 2 * Math.PI * 20;
+const INNER_RADIUS = 14.5;
+const INNER_CIRCUMFERENCE = 2 * Math.PI * INNER_RADIUS;
+const ringPercent = (value: number | null) => value === null ? '··' : String(Math.round(value)) + '%';
 const percent = (value: number | null) => value === null ? '··' : String(Math.round(value * 10) / 10) + '%';
 const remaining = (used: number | null) => used === null ? null : Math.max(0, 100 - used);
 function renderStorage(state: StorageState): void {
   for (const id of diskIds) {
     const { reading, status } = state[id];
-    const label = reading ? formatDiskBytes(reading.freeBytes) + ' free' : status === 'waiting' ? 'Checking…' : 'Unavailable';
-    // A remote disk with no host set is off, so its row is hidden.
-    element(id + '-card').hidden = status === 'off';
+    const value = reading ? compactDiskBytes(reading.freeBytes) : '··';
+    const full = reading ? formatDiskBytes(reading.freeBytes) + ' free of ' + formatDiskBytes(reading.totalBytes) : status === 'waiting' ? 'Checking' : 'Unavailable';
+    const card = element(id + '-card');
+    // A remote disk with no host set is off, so its tile is hidden.
+    card.hidden = status === 'off';
+    card.dataset.stale = String(status === 'stale');
     element(id + '-label').textContent = state[id].label;
-    const volume = state[id].volume + (status === 'stale' ? ' · stale' : '');
-    element(id + '-volume').textContent = volume;
-    element(id + '-free').textContent = label;
+    element(id + '-volume').textContent = reading ? (status === 'stale' ? state[id].volume + ' · stale' : state[id].volume + ' free') : status === 'waiting' ? 'Checking…' : 'Unavailable';
+    element(id + '-free').textContent = value;
     const left = reading ? 100 * reading.freeBytes / reading.totalBytes : null;
     meter(id + '-meter', id + '-fill', left);
-    element(id + '-meter').style.visibility = reading ? 'visible' : 'hidden';
-    element(id + '-total').textContent = reading ? formatDiskBytes(reading.totalBytes) + ' total' : 'Disk space';
-    element(id + '-age').textContent = reading ? ageLabel(Date.now() - reading.observedAt) : '';
-    element(id + '-card').setAttribute('aria-label', state[id].label + ' ' + volume + ': ' + label + '. Open disk details.');
+    const label = state[id].label + ' ' + state[id].volume + ': ' + full + '. Open disk details.';
+    card.title = label;
+    card.setAttribute('aria-label', label);
   }
 }
 function meter(id: string, fill: string, left: number | null, pace: Pace | null = null, marker: string | null = null): void {
-  element(fill).style.width = Math.max(0, Math.min(100, left ?? 0)) + '%';
+  const arc = element(fill);
+  const clamped = left === null ? 0 : Math.max(0, Math.min(100, left));
+  const on = left === null || clamped <= 0 ? 0 : RING_CIRCUMFERENCE * clamped / 100;
+  arc.setAttribute('stroke-dasharray', on.toFixed(2) + ' ' + RING_CIRCUMFERENCE.toFixed(2));
+  arc.style.opacity = on > 0 ? '1' : '0';
   const bar = element(id);
-  if (left === null) bar.removeAttribute('aria-valuenow'); else bar.setAttribute('aria-valuenow', String(Math.max(0, Math.min(100, left))));
+  if (left === null) bar.removeAttribute('aria-valuenow'); else bar.setAttribute('aria-valuenow', String(clamped));
   bar.dataset.tone = left !== null && left <= 5 ? 'bad' : left !== null && left <= 20 ? 'warn' : 'good';
-  // The marker sits where the remaining bar would end if use tracked time evenly; a bar short of it is ahead of pace.
-  if (marker) { const tick = element(marker); tick.hidden = !pace; if (pace) tick.style.left = (100 - pace.elapsedPercent) + '%'; }
+  // The tick marks where the ring would end if use tracked time evenly; an arc shorter than it is ahead of pace.
+  if (marker) {
+    const tick = element(marker);
+    // SVG elements have no hidden property, so the attribute itself is toggled; setting .hidden left every tick hidden in 0.8.0.
+    tick.toggleAttribute('hidden', !pace);
+    if (pace) {
+      const evenLeft = Math.max(0, Math.min(100, 100 - pace.elapsedPercent));
+      const angle = 2 * Math.PI * evenLeft / 100;
+      const c = 23, inner = 16, outer = 24;
+      tick.setAttribute('x1', (c + Math.cos(angle) * inner).toFixed(2));
+      tick.setAttribute('y1', (c + Math.sin(angle) * inner).toFixed(2));
+      tick.setAttribute('x2', (c + Math.cos(angle) * outer).toFixed(2));
+      tick.setAttribute('y2', (c + Math.sin(angle) * outer).toFixed(2));
+    }
+  }
 }
 const paceTag = (pace: Pace | null) => pace && pace.label !== 'on pace' ? ' · ' + pace.label : '';
 const projectName = (name: string) => name.length > 18 ? name.slice(0, 17) + '…' : name;
 const compactTokens = (value: number) => value >= 1e6 ? (Math.round(value / 1e5) / 10) + 'M' : value >= 1e3 ? Math.round(value / 1e3) + 'k' : String(Math.round(value));
-// The top project always joins the row's meta line; when the line is too narrow the pace words
-// go first, since the meter's marker still shows pace, and only then the project.
-function metaWithLeader(id: string, base: string, short: string, view: DisplayState['projects']['claude']): void {
-  const span = element(id);
-  const leader = view.rows[0];
-  if (!leader || leader.share <= 0) { span.textContent = base; return; }
-  const tag = ' · ' + projectName(leader.name) + ' ' + leader.share + '%';
-  for (const text of [base + tag, short + tag, base]) {
-    span.textContent = text;
-    if (text === base || span.scrollWidth <= span.clientWidth) return;
-  }
-}
 function projectLines(view: DisplayState['projects']['claude'], text: (value: string, heading?: boolean) => void): void {
   text('By project · weighted local usage', true);
   if (!view.rows.length) text(view.coverage === null && view.totalUnits === 0 ? 'No project usage recorded in this window yet.' : 'No project usage in this window.');
@@ -84,54 +95,74 @@ function forecastText(view: DisplayState['forecast'][keyof DisplayState['forecas
   if (view.pastReset || view.emptyAt === null) return 'At the last hour\'s pace it lasts past the reset.';
   return 'At the last hour\'s pace it runs out at ' + reset(Math.floor(view.emptyAt / 1000)) + '.';
 }
-// Antigravity reports one quota per pool of models and the pool count can change, so its cards are built here, before the disk rows.
+// Antigravity reports a weekly and a 5-hour quota per model group and the group count can change, so its tiles are built here,
+// before the disk tiles. The outer ring is the weekly limit and the inner ring the 5-hour limit.
 function antigravityCard(index: number): HTMLElement {
   const id = 'ag-' + index;
   const existing = document.getElementById(id + '-card');
   if (existing) return existing;
   const node = (tag: string, className = '', nodeId = '') => { const made = document.createElement(tag); if (className) made.className = className; if (nodeId) made.id = nodeId; return made; };
-  const card = node('button', 'card antigravity-card', id + '-card');
-  const name = node('span', 'name');
-  name.append(node('i', 'dot antigravity'), 'Antigravity', node('small', '', id + '-pool'));
-  const top = node('span', 'row');
-  top.append(name, node('strong', '', id + '-percent'));
-  const bar = node('span', 'meter antigravity-meter', id + '-meter');
-  bar.setAttribute('role', 'progressbar'); bar.setAttribute('aria-valuemin', '0'); bar.setAttribute('aria-valuemax', '100');
-  bar.append(node('span', '', id + '-fill'));
-  const meta = node('span', 'row meta');
-  meta.append(node('span', '', id + '-meta'), node('span', '', id + '-reset'));
-  card.append(top, bar, meta);
+  const svgNode = (tag: string, className = '', nodeId = '') => { const made = document.createElementNS(SVG_NS, tag); if (className) made.setAttribute('class', className); if (nodeId) made.id = nodeId; return made; };
+  const card = node('button', 'card ring-tile antigravity-card', id + '-card');
+  const ring = node('span', 'ring', id + '-meter');
+  ring.setAttribute('role', 'progressbar'); ring.setAttribute('aria-valuemin', '0'); ring.setAttribute('aria-valuemax', '100');
+  const svg = svgNode('svg');
+  svg.setAttribute('viewBox', '0 0 46 46'); svg.setAttribute('width', '46'); svg.setAttribute('height', '46'); svg.setAttribute('aria-hidden', 'true');
+  for (const [circle, radius] of [[svgNode('circle', 'track'), 20], [svgNode('circle', 'arc antigravity', id + '-fill'), 20],
+    [svgNode('circle', 'track inner'), INNER_RADIUS], [svgNode('circle', 'arc inner', id + '-inner'), INNER_RADIUS]] as const) {
+    circle.setAttribute('cx', '23'); circle.setAttribute('cy', '23'); circle.setAttribute('r', String(radius));
+    svg.append(circle);
+  }
+  ring.append(svg, node('strong', '', id + '-percent'));
+  const labels = node('span', 'tile-label');
+  labels.append(node('span', 'tile-name', id + '-pool'), node('small', '', id + '-meta'));
+  card.append(ring, labels);
   card.addEventListener('click', () => openPanel('antigravity'));
   element('local-card').before(card);
   return card;
 }
+// The inner ring has its own length and its own warning colour, so it does not take the outer ring's tone.
+function innerMeter(fill: string, left: number | null): void {
+  const arc = element(fill);
+  const clamped = left === null ? 0 : Math.max(0, Math.min(100, left));
+  const on = clamped <= 0 ? 0 : INNER_CIRCUMFERENCE * clamped / 100;
+  arc.setAttribute('stroke-dasharray', on.toFixed(2) + ' ' + INNER_CIRCUMFERENCE.toFixed(2));
+  arc.style.opacity = on > 0 ? '1' : '0';
+  arc.setAttribute('data-tone', left !== null && left <= 5 ? 'bad' : left !== null && left <= 20 ? 'warn' : 'good');
+}
+const bucketPassed = (bucket: { resetsAt: number | null } | null) => !!bucket && bucket.resetsAt !== null && bucket.resetsAt * 1000 <= Date.now();
 function renderAntigravity(state: DisplayState['antigravity']): void {
   const snap = state.snapshot;
   const pools = snap?.pools || [];
-  // No install, or the first read still running, hides the rows, so a PC without Antigravity never flashes one; after that,
-  // no reading shows one row with the status.
+  // No install, or the first read still running, hides the tiles, so a PC without Antigravity never flashes one; after that,
+  // no reading shows one tile with the status.
   const count = state.status === 'absent' || (state.status === 'loading' && !snap) ? 0 : Math.max(1, pools.length);
   for (let index = 0; index < count; index++) {
     const id = 'ag-' + index;
     const card = antigravityCard(index);
     const pool = pools[index];
-    const passed = !!pool && pool.resetsAt !== null && pool.resetsAt * 1000 <= Date.now();
-    const left = !pool || passed ? null : pool.remainingPercent;
+    const weekly = pool?.weekly ?? null, fiveHour = pool?.fiveHour ?? null;
+    const passed = bucketPassed(weekly) || bucketPassed(fiveHour);
+    const weeklyLeft = !weekly || bucketPassed(weekly) ? null : weekly.remainingPercent;
+    const fiveLeft = !fiveHour || bucketPassed(fiveHour) ? null : fiveHour.remainingPercent;
     card.hidden = false;
-    // A reading kept from a closed app is greyed and carries its age until the reset passes.
+    // A reading kept from a closed app is greyed and carries its age until a reset passes.
     card.dataset.stale = String(!!pool && state.stale && !passed);
-    element(id + '-pool').textContent = pool?.name || 'plan';
-    element(id + '-percent').textContent = left === null ? '··' : percent(left) + ' left';
-    meter(id + '-meter', id + '-fill', left);
-    element(id + '-meter').setAttribute('aria-label', 'Antigravity ' + (pool?.name || 'plan') + ' quota remaining');
-    const meta = !pool ? (state.status === 'ready' ? 'No model quota reported' : antigravityLabels[state.status]) :
-      passed ? (state.status === 'closed' ? 'Open Antigravity to refresh' : 'Reset passed, awaiting data') :
-      state.stale && snap ? 'Stale · ' + ageLabel(Date.now() - snap.observedAt) :
-      pool.remainingPercent === null ? 'Percentage not reported' :
-      (snap?.plan ? snap.plan + ' plan' : 'Plan') + ' · ' + pool.models.length + (pool.models.length === 1 ? ' model' : ' models');
+    element(id + '-pool').textContent = pool?.name || 'Antigravity';
+    element(id + '-percent').textContent = ringPercent(weeklyLeft);
+    meter(id + '-meter', id + '-fill', weeklyLeft);
+    innerMeter(id + '-inner', fiveLeft);
+    element(id + '-meter').setAttribute('aria-label', 'Antigravity ' + (pool?.name || 'plan') + ' weekly quota remaining');
+    const meta = !pool ? (state.status === 'ready' ? 'No quota' : antigravityLabels[state.status]) :
+      passed && state.status === 'closed' ? 'Open Antigravity' :
+      state.stale && snap && !passed ? 'Stale · ' + ageLabel(Date.now() - snap.observedAt).replace('Read ', '') :
+      '5h ' + ringPercent(fiveLeft);
     element(id + '-meta').textContent = meta;
-    element(id + '-reset').textContent = !passed && pool?.resetsAt ? countdown(pool.resetsAt).replace('Resets in ', '') : '';
-    card.setAttribute('aria-label', 'Antigravity ' + (pool?.name || 'plan') + ': ' + (left === null ? meta : percent(left) + ' left') + '. Open details.');
+    const label = 'Antigravity ' + (pool?.name || 'plan') + ': ' + (!pool ? meta :
+      'weekly ' + (weeklyLeft === null ? 'unknown' : percent(weeklyLeft) + ' left') + ', 5-hour ' + (fiveLeft === null ? 'unknown' : percent(fiveLeft) + ' left') +
+      (state.stale && !passed ? ', stale' : '')) + '. Open details.';
+    card.title = label;
+    card.setAttribute('aria-label', label);
   }
   for (let index = count; document.getElementById('ag-' + index + '-card'); index++) element('ag-' + index + '-card').hidden = true;
 }
@@ -142,40 +173,57 @@ function render(state: DisplayState): void {
   const left = expired ? null : selected?.remainingPercent ?? null;
   document.documentElement.dataset.theme = state.theme;
   element<HTMLSelectElement>('theme').value = state.theme;
-  element('percent').textContent = left === null ? '··' : percent(left) + ' left';
+  element('percent').textContent = ringPercent(left);
   const codexPace = paceOf(expired ? null : selected?.usedPercent ?? null, selected?.resetsAt ?? null, (selected?.durationMins ?? 10080) * 60000);
   meter('meter', 'fill', left, codexPace, 'codex-pace');
   const codexStatus = expired ? 'Awaiting reset' : selected?.restricted ? 'Account restricted' : state.stale ? 'Stale sample' : state.status !== 'ready' ? labels[state.status] :
     left !== null ? 'Weekly remaining' : state.snapshot?.selection === 'ambiguous' ? 'Multiple limits, see details' : 'Weekly limit unavailable';
-  metaWithLeader('codex-meta', codexStatus + (codexStatus === 'Weekly remaining' ? paceTag(codexPace) : ''), codexStatus, state.projects.codex);
-  element('codex-reset').textContent = !expired && selected?.resetsAt ? countdown(selected.resetsAt).replace('Resets in ', '') : '';
+  element('codex-meta').textContent = codexStatus === 'Weekly remaining'
+    ? (selected?.resetsAt ? countdown(selected.resetsAt).replace('Resets in ', '') : 'week')
+    : codexStatus;
+  const codexLeader = state.projects.codex.rows[0];
+  const codexTitle = 'Codex: ' + (left === null ? codexStatus : percent(left) + ' left') + paceTag(codexPace) + (codexLeader && codexLeader.share > 0 ? ' · ' + projectName(codexLeader.name) + ' ' + codexLeader.share + '%' : '') + '. Open details.';
+  element('codex-card').title = codexTitle;
+  element('codex-card').setAttribute('aria-label', codexTitle);
   const claude = state.claude;
   // The approximately-equal sign marks every estimated number, so it is never mistaken for an account reading.
   const mark = claude.mode === 'estimate' ? '≈' : '';
   const weekly = remaining(claude.weekly.percent);
-  element('claude-percent').textContent = weekly === null ? '··' : mark + percent(weekly) + ' left';
+  element('claude-percent').textContent = weekly === null ? '··' : mark + ringPercent(weekly);
   const claudePace = paceOf(claude.weekly.percent, claude.weekly.resetsAt, WEEK_MS);
   meter('claude-meter', 'claude-fill', weekly, claudePace, 'claude-pace');
   const claudeStatus = weekly !== null ? 'Remaining · ' + (claude.mode === 'exact' ? 'exact' : 'est.') : claudeLabels[claude.mode];
-  metaWithLeader('claude-meta', claudeStatus + (weekly !== null ? paceTag(claudePace) : ''), claudeStatus, state.projects.claude);
-  element('claude-short').textContent = claude.fiveHour.percent === null ? '' : '5h ' + mark + percent(remaining(claude.fiveHour.percent)) + ' left';
+  element('claude-meta').textContent = weekly === null ? claudeLabels[claude.mode]
+    : claude.mode === 'estimate' ? 'estimate'
+    : claude.fiveHour.percent !== null ? '5h ' + ringPercent(remaining(claude.fiveHour.percent)) : 'week';
+  const claudeLeader = state.projects.claude.rows[0];
+  const claudeTitle = 'Claude Code: ' + (weekly === null ? claudeStatus : mark + percent(weekly) + ' left') + (claude.fiveHour.percent !== null ? ' (5h ' + mark + percent(remaining(claude.fiveHour.percent)) + ' left)' : '') +
+    (weekly !== null ? paceTag(claudePace) : '') + (claudeLeader && claudeLeader.share > 0 ? ' · ' + projectName(claudeLeader.name) + ' ' + claudeLeader.share + '%' : '') + '. Open details.';
+  element('claude-card').title = claudeTitle;
+  element('claude-card').setAttribute('aria-label', claudeTitle);
   const grok = state.grok;
   const grokExpired = grok.snapshot?.resetsAt != null && grok.snapshot.resetsAt * 1000 <= Date.now();
   const grokLeft = grokExpired ? null : grok.snapshot?.remainingPercent ?? null;
-  element('grok-percent').textContent = grokLeft === null ? '··' : percent(grokLeft) + ' left';
+  element('grok-percent').textContent = ringPercent(grokLeft);
   const grokPace = paceOf(grokExpired ? null : grok.snapshot?.usedPercent ?? null, grok.snapshot?.resetsAt ?? null, grok.snapshot?.period === 'daily' ? 86400000 : grok.snapshot?.period === 'monthly' ? 30 * 86400000 : WEEK_MS);
   meter('grok-meter', 'grok-fill', grokLeft, grokPace, 'grok-pace');
-  element('grok-period').textContent = periodNames[grok.snapshot?.period || 'unknown'].short;
-  element('grok-meta').textContent = grokExpired ? 'Awaiting reset' : grok.snapshot && grok.stale ? 'Stale · ' + grokLabels[grok.status] : grok.status !== 'ready' ? grokLabels[grok.status] :
-    grokLeft !== null ? periodNames[grok.snapshot?.period || 'unknown'].long + ' remaining' + paceTag(grokPace) : 'Percentage not reported';
-  element('grok-reset').textContent = !grokExpired && grok.snapshot?.resetsAt ? countdown(grok.snapshot.resetsAt).replace('Resets in ', '') : '';
+  const grokStatus = grokExpired ? 'Awaiting reset' : grok.snapshot && grok.stale ? 'Stale · ' + grokLabels[grok.status] : grok.status !== 'ready' ? grokLabels[grok.status] :
+    grokLeft !== null ? periodNames[grok.snapshot?.period || 'unknown'].long + ' remaining' : 'Percentage not reported';
+  element('grok-meta').textContent = grokExpired ? 'Awaiting reset'
+    : grok.snapshot && grok.stale ? 'Stale'
+    : grok.status !== 'ready' ? grokLabels[grok.status]
+    : grokLeft === null ? 'Percentage not reported'
+    : grok.snapshot?.resetsAt ? countdown(grok.snapshot.resetsAt).replace('Resets in ', '') : periodNames[grok.snapshot?.period || 'unknown'].short;
+  const grokTitle = 'Grok: ' + (grokLeft === null ? grokStatus : percent(grokLeft) + ' left') + (grokLeft !== null ? paceTag(grokPace) : '') + '. Open details.';
+  element('grok-card').title = grokTitle;
+  element('grok-card').setAttribute('aria-label', grokTitle);
   renderAntigravity(state.antigravity);
   renderStorage(state.storage);
-  element('age').textContent = 'Codex · ' + ageLabel(state.ageMs).replace('Read ', '').replace('Awaiting first read','waiting');
+  element('age').textContent = 'Codex · ' + ageLabel(state.ageMs).replace('Read ', '').replace('Awaiting first read', 'waiting');
   const refresh = element<HTMLButtonElement>('refresh');
   refresh.disabled = state.refreshing || state.claude.refreshing || state.grok.refreshing || state.antigravity.refreshing || state.cooldownMs > 0;
   refresh.title = state.cooldownMs > 0 ? 'Refresh available in ' + Math.ceil(state.cooldownMs / 1000) + ' seconds' : 'Refresh usage';
-  // Grok needs the user's grokcli folder; without one its row is hidden.
+  // Grok needs the user's grokcli folder; without one its tile is hidden.
   element('grok-card').hidden = !state.config.grokcliRoot;
   renderSettings(state);
   if (state.config.firstRun && !firstRunShown) { firstRunShown = true; openPanel('settings'); action(() => window.limiter.firstRunSeen()); }
@@ -246,19 +294,20 @@ function renderDetails(): void {
     const agy = state.antigravity;
     const snap = agy.snapshot;
     text('Read from the Antigravity app on this PC every 5 minutes while it is open. ' + antigravityLabels[agy.status] + (snap ? ' · ' + ageLabel(Date.now() - snap.observedAt) + (agy.stale ? ' · stale' : '') : '') + '.');
-    if (snap?.plan) text('Plan: ' + snap.plan + '.');
     for (const pool of snap?.pools || []) {
       text(pool.name, true);
-      const passed = pool.resetsAt !== null && pool.resetsAt * 1000 <= Date.now();
-      text(passed ? 'Reset passed, awaiting new data.' : pool.remainingPercent === null ? 'Remaining percentage not reported.' : percent(pool.remainingPercent) + ' remaining');
-      text(reset(pool.resetsAt));
-      text(pool.models.join(', '));
+      for (const [title, bucket] of [['Weekly, outer ring', pool.weekly], ['5-hour, inner ring', pool.fiveHour]] as const) {
+        text(title + ': ' + (!bucket ? 'not reported.' : bucketPassed(bucket) ? 'reset passed, awaiting new data.' :
+          bucket.remainingPercent === null ? 'remaining percentage not reported.' : percent(bucket.remainingPercent) + ' remaining'));
+        if (bucket && !bucketPassed(bucket)) text(reset(bucket.resetsAt));
+      }
+      if (pool.models.length) text(pool.models.join(', '));
     }
     if (snap && !snap.pools.length) text('Antigravity reported no model quota.');
     if (agy.status === 'closed') text('Open Antigravity to refresh. Limiter can read the quota only while the app runs.');
     if (agy.status === 'signed-out') text('Sign in to Antigravity, then refresh.');
     if (agy.status === 'compatibility') text('Antigravity changed how it reports quota, so Limiter needs an update.');
-    text('Models that share one remaining amount and one reset time draw on one pool, so each pool is one row.');
+    text('Models in one group share a weekly limit and a 5-hour limit. The outer ring shows the weekly limit and the inner ring the 5-hour limit.');
   } else if (panel === 'storage') {
     for (const id of diskIds) {
       const { status, reading, label, volume } = state.storage[id];
