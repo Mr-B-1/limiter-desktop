@@ -71,9 +71,12 @@ jobs:
       - name: Packaged smoke test
         shell: pwsh
         run: |
+          # Windows 11 ARM runners boot with LockApp's splash CoreWindow covering the auto-logon desktop until dismissed.
+          Stop-Process -Name LockApp -Force -ErrorAction SilentlyContinue
           $helper = Start-Process -FilePath pwsh -ArgumentList '-NoProfile', '-File', 'tools/keep-active.ps1' -WindowStyle Hidden -PassThru
           try {
             Start-Sleep -Seconds 3
+            Stop-Process -Name LockApp -Force -ErrorAction SilentlyContinue
             node tools/packaged-smoke.mjs --arch=${{ matrix.arch }}
             if ($LASTEXITCODE -ne 0) { throw "Packaged smoke failed with exit $LASTEXITCODE" }
           } finally {
