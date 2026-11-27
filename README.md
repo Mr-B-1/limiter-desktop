@@ -43,7 +43,7 @@ Limiter reads local files on your PC and the quota reported by the Codex CLI, gr
 
 ## Build from source
 
-Requires Windows 10 or 11 (x64 or ARM64) and Node 24. Each command targets your own PC's processor architecture automatically unless you pass `--arch=x64` or `--arch=arm64`. A GitHub Actions workflow in `.github/workflows/windows.yml` builds, unit-tests, smoke-tests, and zips both the `x64` and `arm64` packages on GitHub Windows runners.
+Requires Windows 10 or 11 (x64 or ARM64) and Node 24. Each command targets your own PC's processor architecture automatically unless you pass `--arch=x64` or `--arch=arm64`. A GitHub Actions workflow in `.github/workflows/windows.yml` builds, unit-tests, smoke-tests, and zips the `x64` package on a GitHub x64 runner.
 
 ```bash
 node tools/build.mjs setup

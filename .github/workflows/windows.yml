@@ -1,6 +1,6 @@
-name: Windows release builds
+name: Windows x64 build
 
-# Builds, tests and smoke-tests both Windows packages (x64 for Intel/AMD PCs and arm64 for Snapdragon/ARM PCs), then zips each only if every check passed.
+# Builds, tests and smoke-tests the x64 package on a real x64 Windows runner, then zips it only if every check passed.
 on:
   workflow_dispatch:
   push:
@@ -10,18 +10,9 @@ permissions:
   contents: read
 
 jobs:
-  build:
-    name: Windows ${{ matrix.arch }}
-    runs-on: ${{ matrix.runner }}
+  x64:
+    runs-on: windows-2025
     timeout-minutes: 40
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - arch: x64
-            runner: windows-2025
-          - arch: arm64
-            runner: windows-11-arm
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -35,7 +26,6 @@ jobs:
         shell: pwsh
         run: |
           "Processor: $env:PROCESSOR_ARCHITECTURE"
-          "Identifier: $env:PROCESSOR_IDENTIFIER"
           "Session: $([System.Diagnostics.Process]::GetCurrentProcess().SessionId)"
           Get-Process -Name explorer -ErrorAction SilentlyContinue | Select-Object Id, SessionId | Format-Table
 
@@ -45,8 +35,8 @@ jobs:
       - name: Unit tests
         run: node tools/build.mjs test
 
-      - name: Package ${{ matrix.arch }}
-        run: node tools/build.mjs package --arch=${{ matrix.arch }}
+      - name: Package x64
+        run: node tools/build.mjs package --arch=x64
 
       # A runner has no signed-in Codex account, so the smoke reads quota from a local stand-in that the receipt names.
       - name: Build the Codex stand-in
@@ -71,20 +61,17 @@ jobs:
       - name: Packaged smoke test
         shell: pwsh
         run: |
-          # Windows 11 ARM runners boot with LockApp's splash CoreWindow covering the auto-logon desktop until dismissed.
-          Stop-Process -Name LockApp -Force -ErrorAction SilentlyContinue
           $helper = Start-Process -FilePath pwsh -ArgumentList '-NoProfile', '-File', 'tools/keep-active.ps1' -WindowStyle Hidden -PassThru
           try {
             Start-Sleep -Seconds 3
-            Stop-Process -Name LockApp -Force -ErrorAction SilentlyContinue
-            node tools/packaged-smoke.mjs --arch=${{ matrix.arch }}
+            node tools/packaged-smoke.mjs --arch=x64
             if ($LASTEXITCODE -ne 0) { throw "Packaged smoke failed with exit $LASTEXITCODE" }
           } finally {
             Stop-Process -Id $helper.Id -ErrorAction SilentlyContinue
           }
 
       - name: Zip the tested package
-        run: node tools/make-release.mjs --arch=${{ matrix.arch }}
+        run: node tools/make-release.mjs --arch=x64
 
       - name: Collect results
         if: always()
@@ -93,14 +80,14 @@ jobs:
           $build = Join-Path $env:LOCALAPPDATA 'Limiter-build'
           New-Item -ItemType Directory -Force out | Out-Null
           if (Test-Path (Join-Path $build 'dist')) { Copy-Item (Join-Path $build 'dist\*') out }
-          if (Test-Path (Join-Path $build 'smoke\${{ matrix.arch }}')) {
-            Get-ChildItem (Join-Path $build 'smoke\${{ matrix.arch }}') -Recurse -Filter receipt.json | ForEach-Object { Copy-Item $_.FullName (Join-Path out ('smoke-' + $_.Directory.Name + '.json')) }
+          if (Test-Path (Join-Path $build 'smoke\x64')) {
+            Get-ChildItem (Join-Path $build 'smoke\x64') -Recurse -Filter receipt.json | ForEach-Object { Copy-Item $_.FullName (Join-Path out ('smoke-' + $_.Directory.Name + '.json')) }
           }
           Get-ChildItem out | Format-Table Name, Length
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
-          name: limiter-windows-${{ matrix.arch }}
+          name: limiter-windows-x64
           path: out/
           if-no-files-found: warn
